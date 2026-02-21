@@ -5,3 +5,4 @@ crewai
 langchain-google-genai
 google-generativeai
 pillow
+supabase
