@@ -23,12 +23,10 @@ from supabase import create_client, Client
 # ==========================================
 # 1. API KEY & LLM & DATABASE
 # ==========================================
-# Mengambil dari Secrets Streamlit Cloud
 API_KEY = st.secrets["GOOGLE_API_KEY"]
 os.environ["GOOGLE_API_KEY"] = API_KEY.strip()
 genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 
-# Inisialisasi Supabase
 SB_URL = st.secrets["SUPABASE_URL"]
 SB_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SB_URL, SB_KEY)
@@ -69,7 +67,6 @@ def process_images(files):
 def save_audit_to_db(user_input, audit_result, nickname):
     if st.session_state.data_saved: return 
     
-    # Tanpa try-except agar error Supabase terlihat jelas
     score_match = re.search(r"SKOR_FINAL\s*:\s*(?:\[)?([\d.]+)(?:\])?", audit_result)
     raw_score = float(score_match.group(1)) if score_match else 0.0
     score = raw_score / 10 if raw_score > 10 else raw_score
@@ -84,7 +81,6 @@ def save_audit_to_db(user_input, audit_result, nickname):
     st.session_state.data_saved = True
 
 def extract_and_save_tasks(audit_result, nickname):
-    """V8.9: Ekstraksi Tanpa Filter Error untuk Debugging."""
     match = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", audit_result, re.DOTALL | re.IGNORECASE)
     if match:
         content = match.group(1)
@@ -128,7 +124,7 @@ st.set_page_config(page_title="Strategic Auditor V8.9", layout="wide")
 user_nickname = st.sidebar.text_input("Identitas:", value="Guest").strip()
 page = st.sidebar.radio("Navigasi:", ["Audit & Konsultasi", "Dashboard"])
 
-# Sidebar Checklist (Tanpa try-except)
+# Sidebar Checklist
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"### 📋 Checklist: {user_nickname}")
 
@@ -148,7 +144,14 @@ if page == "Audit & Konsultasi":
     st.markdown("---")
 
     if st.session_state.audit_stage == 'input':
-        st.warning("### **🛠️ Panduan Operasional Konsultasi**")
+        # MENGEMBALIKAN TEKS PANDUAN YANG LENGKAP
+        st.warning("""
+        ### **🛠️ Panduan Operasional Konsultasi**
+        1. **Input Tantangan**: Jelaskan kendala teknis atau rencana strategismu secara detail.
+        2. **Lampirkan Bukti**: Gunakan fitur upload untuk menyertakan screenshot data atau foto situasi.
+        3. **Interaksi Ahli**: Jawab permintaan data dari AI Consultant untuk mempertajam diagnosis.
+        4. **Eksekusi**: Cek sidebar kiri untuk daftar tugas nyata yang harus kamu selesaikan.
+        """)
         u_in = st.text_area("Apa tantangan teknis atau rencana yang ingin kamu audit?", height=120)
         u_files = st.file_uploader("Upload Bukti Visual/Data (Opsional)", accept_multiple_files=True)
         
@@ -207,8 +210,8 @@ if page == "Audit & Konsultasi":
 
 elif page == "Dashboard":
     st.title(f"📊 Intelligence Tracking: {user_nickname}")
-    # Tanpa try-except untuk melihat error grafik
-    res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).order("created_at", descending=False).execute()
+    # PERBAIKAN SINTAKS: menggunakan 'desc=False' untuk menghindari TypeError
+    res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).order("created_at", desc=False).execute()
     if res_log.data:
         df = pd.DataFrame(res_log.data)
         df['created_at'] = pd.to_datetime(df['created_at'])
