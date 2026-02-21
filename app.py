@@ -24,7 +24,7 @@ from supabase import create_client, Client # TAMBAHAN
 # 1. API KEY & LLM & DATABASE
 # ==========================================
 # Mengambil dari Secrets Streamlit Cloud
-API_KEY = st.secrets["GOOGLE_API_KEY"]
+API_KEY = st.secrets["AIzaSyDBoXE6-dmos860IAK8Cc2w73ESgyn7A4s"]
 os.environ["GOOGLE_API_KEY"] = API_KEY.strip()
 genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
 
