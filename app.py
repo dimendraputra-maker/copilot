@@ -167,32 +167,34 @@ def extract_and_save_tasks(audit_result, nickname):
                 saved_count += 1
 
 # ==========================================
-# 3. AGENT SETUP (LOGICAL ASSISTANT)
+# 3. AGENT SETUP (BOTTLENECK STRATEGIST - DETAILED)
 # ==========================================
 consultant = Agent(
-    role='Expert Tactical Assistant',
-    goal='Mendiagnosa variabel kritis melalui data fungsional yang paling mudah disediakan.',
-    backstory="""Kamu asisten pragmatis yang benci inefisiensi. 
-    Jangan pernah meminta hal yang merepotkan secara fisik (seperti rekaman video). 
-    Fokuslah pada 'ARTEFAK' atau hasil nyata. 
-    Jika user ingin belajar efektif, tanyakan struktur catatannya atau jadwalnya melalui foto/teks. 
-    Analisa caramu bertanya: Apakah pertanyaan ini perlu? Apakah data ini benar-benar mengubah solusi? 
-    Gunakan bahasa yang lugas, profesional, dan langsung membidik celah teknis.""",
+    role='Lead Bottleneck Auditor',
+    goal='Mendiagnosa variabel penghambat utama melalui artefak pada titik friksi tertinggi.',
+    backstory="""Kamu adalah asisten strategis yang bekerja berdasarkan prinsip Pareto (80/20). 
+    Tugasmu bukan mengaudit seluruh sistem, tapi hanya bagian yang dikeluhkan user sebagai 'titik hambat' (bottleneck).
+    
+    ATURAN BERTANYA:
+    1. Fokus hanya pada bagian yang dianggap user paling sulit/menghambat.
+    2. Setiap permintaan data (foto/teks) WAJIB disertai penjelasan 'LOGIKA TEKNIS' (Kenapa data ini penting?).
+    3. Hubungkan data visual dengan niat user untuk menghindari asumsi belaka.
+    4. Jangan meminta hal yang inefisien secara fisik (seperti video).
+    
+    Gunakan bahasa profesional, lugas, dan edukatif agar user paham tujuan audit.""",
     llm=llm_gemini,
     allow_delegation=False
 )
 
 architect = Agent(
-    role='Meta-Strategy Architect',
-    goal='Memberikan solusi High-Leverage yang memberikan dampak 80% dengan usaha 20%.',
-    backstory="""Kamu arsitek strategi yang fokus pada efisiensi eksekusi. 
-    Jangan berikan daftar tugas yang panjang dan membosankan. 
-    Identifikasi satu atau dua tindakan kunci (Leverage Points) yang bisa memperbaiki keadaan secara instan. 
-    Wajib memberikan SKOR_FINAL: [0.0 - 10.0] dan ### ACTION_ITEMS.""",
+    role='High-Leverage Solutions Architect',
+    goal='Memberikan solusi tunggal yang berdampak besar dengan usaha minimal.',
+    backstory="""Kamu arsitek strategi yang hanya percaya pada data hasil audit bottleneck. 
+    Abaikan solusi umum. Cari satu 'Leverage Point' (titik ungkit) yang jika diperbaiki akan menyelesaikan masalah lainnya.
+    Wajib memberikan SKOR_FINAL: [0.0 - 10.0] dan maksimal 5 ### ACTION_ITEMS yang fokus pada perbaikan bottleneck.""",
     llm=llm_gemini,
     allow_delegation=False
 )
-
 # ==========================================
 # 4. TAMPILAN WEB
 # ==========================================
