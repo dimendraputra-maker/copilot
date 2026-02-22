@@ -56,6 +56,34 @@ def init_state():
 
 init_state()
 
+def get_user_context(nickname):
+    """Fungsi Meta-Analysis: Mengambil histori ringkas & status eksekusi nyata."""
+    try:
+        # Ambil 3 audit terakhir (Hanya preview untuk cegah Token Bloating)
+        res_audit = supabase.table("audit_log").select("score, input_preview, created_at").eq("user_id", nickname).order("created_at", desc=True).limit(3).execute()
+        
+        # Ambil statistik tugas (Mengatasi Action Blindness)
+        res_tasks = supabase.table("pending_tasks").select("status").eq("user_id", nickname).execute()
+        
+        total_tasks = len(res_tasks.data)
+        completed = len([t for t in res_tasks.data if t['status'] == 'Completed'])
+        pending = total_tasks - completed
+        rate = (completed / total_tasks * 100) if total_tasks > 0 else 0
+        
+        history_summary = "\n".join([f"- {d['created_at'][:10]} (Skor: {d['score']}): {d['input_preview']}..." for d in res_audit.data])
+        return f"""
+        HISTORI AUDIT TERAKHIR:
+        {history_summary if res_audit.data else "Belum ada histori."}
+        
+        STATISTIK EKSEKUSI NYATA:
+        - Total Tugas Diberikan: {total_tasks}
+        - Tugas Selesai: {completed}
+        - Tugas Mangkrak: {pending}
+        - Rasio Keberhasilan: {rate:.1f}%
+        """
+    except:
+        return "Gagal mengambil konteks histori."
+
 def process_images(files):
     descriptions = []
     for f in files:
@@ -110,9 +138,11 @@ consultant = Agent(
 )
 
 architect = Agent(
-    role='Solution Architect',
-    goal='Memberikan blueprint solusi teknis dan langkah aksi nyata.',
-    backstory="""Gunakan SKOR_FINAL: [0.0 - 10.0]. Wajib ada section '### ACTION_ITEMS' berisi daftar solusi perintah singkat.""",
+    role='Meta-Strategy Architect',
+    goal='Memberikan blueprint solusi teknis berdasarkan histori dan data saat ini.',
+    backstory="""Kamu arsitek strategi yang memiliki ingatan jangka panjang. 
+    Gunakan SKOR_FINAL: [0.0 - 10.0]. Jika rasio keberhasilan user rendah, berikan teguran objektif. 
+    Wajib ada section '### ACTION_ITEMS'.""",
     llm=llm_gemini,
     allow_delegation=False
 )
@@ -144,7 +174,6 @@ if page == "Audit & Konsultasi":
     st.markdown("---")
 
     if st.session_state.audit_stage == 'input':
-        # MENGEMBALIKAN TEKS PANDUAN YANG LENGKAP
         st.warning("""
         ### **🛠️ Panduan Operasional Konsultasi**
         1. **Input Tantangan**: Jelaskan kendala teknis atau rencana strategismu secara detail.
@@ -190,11 +219,24 @@ if page == "Audit & Konsultasi":
 
     elif st.session_state.audit_stage == 'report':
         with st.spinner("Membangun Blueprint Solusi..."):
+            # MEMORY INJECTION
+            past_context = get_user_context(user_nickname)
+            
             full_hist = f"Input: {st.session_state.initial_tasks}\n" + "\n".join([f"Q{i+1}: {h['q']}\nA: {h['a']}" for i, h in enumerate(st.session_state.chat_history)])
+            
             task_fin = Task(
-                description=f"Wajib SKOR_FINAL: [angka] dan section '### ACTION_ITEMS'. History: {full_hist}",
+                description=f"""
+                Analisa data saat ini dengan mempertimbangkan histori berikut:
+                {past_context}
+                
+                INTERAKSI SAAT INI:
+                {full_hist}
+                
+                Wajib SKOR_FINAL: [angka] dan section '### ACTION_ITEMS'. 
+                Bandingkan apakah user membaik atau stagnan dalam eksekusi tugas.
+                """,
                 agent=architect,
-                expected_output="Laporan blueprint solusi strategis."
+                expected_output="Laporan blueprint solusi strategis dengan analisa histori."
             )
             res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
             st.markdown(res)
@@ -210,7 +252,6 @@ if page == "Audit & Konsultasi":
 
 elif page == "Dashboard":
     st.title(f"📊 Intelligence Tracking: {user_nickname}")
-    # PERBAIKAN SINTAKS: menggunakan 'desc=False' untuk menghindari TypeError
     res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).order("created_at", desc=False).execute()
     if res_log.data:
         df = pd.DataFrame(res_log.data)
