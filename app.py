@@ -1,6 +1,10 @@
 import os
 import warnings
 import logging
+import re
+import io
+from datetime import datetime
+from PIL import Image
 
 # ==========================================
 # 0. KONFIGURASI SISTEM
@@ -12,13 +16,11 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import re
-from datetime import datetime
-from PIL import Image
 from crewai import Agent, Task, Crew
 from langchain_google_genai import ChatGoogleGenerativeAI
 import google.generativeai as genai
 from supabase import create_client, Client 
+from fpdf import FPDF
 
 # ==========================================
 # 1. API KEY & LLM & DATABASE
@@ -57,12 +59,8 @@ def init_state():
 init_state()
 
 def get_user_context(nickname):
-    """Fungsi Meta-Analysis: Mengambil histori ringkas & status eksekusi nyata."""
     try:
-        # Ambil 3 audit terakhir (Hanya preview untuk cegah Token Bloating)
         res_audit = supabase.table("audit_log").select("score, input_preview, created_at").eq("user_id", nickname).order("created_at", desc=True).limit(3).execute()
-        
-        # Ambil statistik tugas (Mengatasi Action Blindness)
         res_tasks = supabase.table("pending_tasks").select("status").eq("user_id", nickname).execute()
         
         total_tasks = len(res_tasks.data)
@@ -84,6 +82,46 @@ def get_user_context(nickname):
     except:
         return "Gagal mengambil konteks histori."
 
+def generate_pdf(nickname, report_text, score, tasks):
+    """Fungsi ekspor PDF dengan pembersihan Markdown dan karakter spesial."""
+    pdf = FPDF()
+    pdf.add_page()
+    
+    def clean_text(text):
+        # Hilangkan simbol Markdown dan karakter non-Latin
+        text = text.replace("**", "").replace("###", "").replace("##", "").replace("#", "").replace("*", "-")
+        return text.encode('ascii', 'ignore').decode('ascii')
+
+    # Header
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(0, 10, txt=f"STRATEGIC AUDIT REPORT: {clean_text(nickname)}", ln=True, align='C')
+    pdf.set_font("Arial", size=10)
+    pdf.cell(0, 10, txt=f"Generated: {datetime.now().strftime('%d %b %Y | %H:%M')}", ln=True, align='C')
+    pdf.ln(10)
+
+    # Skor
+    pdf.set_fill_color(230, 230, 230)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, txt=f"PERFORMANCE SCORE: {score}/10", ln=True, fill=True)
+    pdf.ln(5)
+
+    # Analisa
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 10, txt="STRATEGIC BLUEPRINT:", ln=True)
+    pdf.set_font("Arial", size=10)
+    pdf.multi_cell(0, 5, txt=clean_text(report_text))
+
+    # Pending Tasks
+    if tasks:
+        pdf.ln(10)
+        pdf.set_font("Arial", 'B', 12)
+        pdf.cell(0, 10, txt="OPERATIONAL CHECKLIST (PENDING):", ln=True)
+        pdf.set_font("Arial", size=10)
+        for i, t in enumerate(tasks, 1):
+            pdf.multi_cell(0, 5, txt=f"{i}. [ ] {clean_text(t['task_name'])}")
+            
+    return pdf.output(dest='S').encode('latin-1')
+
 def process_images(files):
     descriptions = []
     for f in files:
@@ -94,7 +132,6 @@ def process_images(files):
 
 def save_audit_to_db(user_input, audit_result, nickname):
     if st.session_state.data_saved: return 
-    
     score_match = re.search(r"SKOR_FINAL\s*:\s*(?:\[)?([\d.]+)(?:\])?", audit_result)
     raw_score = float(score_match.group(1)) if score_match else 0.0
     score = raw_score / 10 if raw_score > 10 else raw_score
@@ -105,7 +142,6 @@ def save_audit_to_db(user_input, audit_result, nickname):
         "audit_report": audit_result,
         "input_preview": user_input[:100]
     }).execute()
-    
     st.session_state.data_saved = True
 
 def extract_and_save_tasks(audit_result, nickname):
@@ -118,7 +154,6 @@ def extract_and_save_tasks(audit_result, nickname):
             clean_task = clean_task.replace("*", "").replace("_", "").replace("#", "").strip()
             clean_task = re.sub(r"^(Kamu harus |Anda perlu |Pastikan |Lakukan |Segera |Harap |Silakan )", "", clean_task, flags=re.IGNORECASE)
             clean_task = clean_task[0].upper() + clean_task[1:] if len(clean_task) > 0 else clean_task
-            
             if 5 < len(clean_task) < 120:
                 supabase.table("pending_tasks").insert({
                     "user_id": nickname,
@@ -219,22 +254,11 @@ if page == "Audit & Konsultasi":
 
     elif st.session_state.audit_stage == 'report':
         with st.spinner("Membangun Blueprint Solusi..."):
-            # MEMORY INJECTION
             past_context = get_user_context(user_nickname)
-            
             full_hist = f"Input: {st.session_state.initial_tasks}\n" + "\n".join([f"Q{i+1}: {h['q']}\nA: {h['a']}" for i, h in enumerate(st.session_state.chat_history)])
             
             task_fin = Task(
-                description=f"""
-                Analisa data saat ini dengan mempertimbangkan histori berikut:
-                {past_context}
-                
-                INTERAKSI SAAT INI:
-                {full_hist}
-                
-                Wajib SKOR_FINAL: [angka] dan section '### ACTION_ITEMS'. 
-                Bandingkan apakah user membaik atau stagnan dalam eksekusi tugas.
-                """,
+                description=f"""Analisa data saat ini dengan mempertimbangkan histori berikut: {past_context}\nINTERAKSI SAAT INI:\n{full_hist}\nWajib SKOR_FINAL: [angka] dan section '### ACTION_ITEMS'.""",
                 agent=architect,
                 expected_output="Laporan blueprint solusi strategis dengan analisa histori."
             )
@@ -243,6 +267,18 @@ if page == "Audit & Konsultasi":
             
             save_audit_to_db(st.session_state.initial_tasks, res, user_nickname)
             extract_and_save_tasks(res, user_nickname)
+            
+            # FITUR PDF EXPORT
+            st.markdown("---")
+            try:
+                p_tasks = supabase.table("pending_tasks").select("task_name").eq("user_id", user_nickname).eq("status", "Pending").execute().data
+                score_match = re.search(r"SKOR_FINAL\s*:\s*(?:\[)?([\d.]+)(?:\])?", res)
+                final_score = score_match.group(1) if score_match else "0.0"
+                
+                pdf_bytes = generate_pdf(user_nickname, res, final_score, p_tasks)
+                st.download_button(label="📥 Download Blueprint & Checklist (PDF)", data=pdf_bytes, file_name=f"Audit_{user_nickname}.pdf", mime="application/pdf")
+            except Exception as e:
+                st.error(f"Gagal menyiapkan PDF: {e}")
             
             if st.button("Selesai & Reset"):
                 st.session_state.audit_stage = 'input'
