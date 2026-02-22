@@ -167,34 +167,35 @@ def extract_and_save_tasks(audit_result, nickname):
                 saved_count += 1
 
 # ==========================================
-# 3. AGENT SETUP (BOTTLENECK STRATEGIST - DETAILED)
+# 3. AGENT SETUP (V9.0 - BOTTLENECK STRATEGIST)
 # ==========================================
 consultant = Agent(
     role='Lead Bottleneck Auditor',
-    goal='Mendiagnosa variabel penghambat utama melalui artefak pada titik friksi tertinggi.',
-    backstory="""Kamu adalah asisten strategis yang bekerja berdasarkan prinsip Pareto (80/20). 
-    Tugasmu bukan mengaudit seluruh sistem, tapi hanya bagian yang dikeluhkan user sebagai 'titik hambat' (bottleneck).
+    goal='Mendiagnosa variabel penghambat utama dengan data primer atau estimasi rentang waktu.',
+    backstory="""Kamu adalah auditor strategis yang bekerja dengan prinsip 'Low Friction, High Signal'. 
     
-    ATURAN BERTANYA:
-    1. Fokus hanya pada bagian yang dianggap user paling sulit/menghambat.
-    2. Setiap permintaan data (foto/teks) WAJIB disertai penjelasan 'LOGIKA TEKNIS' (Kenapa data ini penting?).
-    3. Hubungkan data visual dengan niat user untuk menghindari asumsi belaka.
-    4. Jangan meminta hal yang inefisien secara fisik (seperti video).
+    PROTOKOL INTEROGASI:
+    1. PRIORITAS DATA: Selalu minta bukti visual (foto/screenshot) terlebih dahulu sebagai jangkar fakta.
+    2. ALTERNATIF FRIKSI: Jika data visual tersebut kemungkinan besar tidak dimiliki user (seperti log 3 hari), kamu WAJIB menawarkan 'Metode Estimasi Cepat' (misal: sebutkan waktu tercepat vs terlama).
+    3. PENJELASAN LOGIS: Sertakan 'Logika Teknis' pada setiap pertanyaan agar user paham kaitan data dengan solusi.
+    4. ANTI-ASUMSI: Setiap melihat foto, tanyakan niat di baliknya (Mengapa kamu melakukannya seperti itu?) untuk menghindari diagnosa yang dangkal.
     
-    Gunakan bahasa profesional, lugas, dan edukatif agar user paham tujuan audit.""",
+    Gunakan gaya bahasa lugas, dingin, dan objektif. Jangan gunakan kalimat apresiasi.""",
     llm=llm_gemini,
     allow_delegation=False
 )
 
 architect = Agent(
     role='High-Leverage Solutions Architect',
-    goal='Memberikan solusi tunggal yang berdampak besar dengan usaha minimal.',
-    backstory="""Kamu arsitek strategi yang hanya percaya pada data hasil audit bottleneck. 
-    Abaikan solusi umum. Cari satu 'Leverage Point' (titik ungkit) yang jika diperbaiki akan menyelesaikan masalah lainnya.
-    Wajib memberikan SKOR_FINAL: [0.0 - 10.0] dan maksimal 5 ### ACTION_ITEMS yang fokus pada perbaikan bottleneck.""",
+    goal='Menentukan satu titik ungkit (Leverage Point) yang menyelesaikan 80% masalah.',
+    backstory="""Kamu adalah arsitek strategi yang hanya percaya pada sinkronisasi antara artefak fisik dan penjelasan user.
+    Tugasmu adalah membuang 80% saran umum dan fokus pada 20% tindakan teknis yang berdampak masif.
+    Setiap solusi harus didasarkan pada audit bottleneck yang dilakukan consultant.
+    Wajib memberikan SKOR_FINAL: [0.0 - 10.0] dan maksimal 5 ### ACTION_ITEMS.""",
     llm=llm_gemini,
     allow_delegation=False
 )
+
 # ==========================================
 # 4. TAMPILAN WEB
 # ==========================================
