@@ -83,35 +83,29 @@ def get_user_context(nickname):
         return "Gagal mengambil konteks histori."
 
 def generate_pdf(nickname, report_text, score, tasks):
-    """Fungsi ekspor PDF dengan pembersihan Markdown dan karakter spesial."""
     pdf = FPDF()
     pdf.add_page()
     
     def clean_text(text):
-        # Hilangkan simbol Markdown dan karakter non-Latin
         text = text.replace("**", "").replace("###", "").replace("##", "").replace("#", "").replace("*", "-")
         return text.encode('ascii', 'ignore').decode('ascii')
 
-    # Header
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt=f"STRATEGIC AUDIT REPORT: {clean_text(nickname)}", ln=True, align='C')
     pdf.set_font("Arial", size=10)
     pdf.cell(0, 10, txt=f"Generated: {datetime.now().strftime('%d %b %Y | %H:%M')}", ln=True, align='C')
     pdf.ln(10)
 
-    # Skor
     pdf.set_fill_color(230, 230, 230)
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, txt=f"PERFORMANCE SCORE: {score}/10", ln=True, fill=True)
     pdf.ln(5)
 
-    # Analisa
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 10, txt="STRATEGIC BLUEPRINT:", ln=True)
     pdf.set_font("Arial", size=10)
     pdf.multi_cell(0, 5, txt=clean_text(report_text))
 
-    # Pending Tasks
     if tasks:
         pdf.ln(10)
         pdf.set_font("Arial", 'B', 12)
@@ -132,7 +126,8 @@ def process_images(files):
 
 def save_audit_to_db(user_input, audit_result, nickname):
     if st.session_state.data_saved: return 
-    score_match = re.search(r"SKOR_FINAL\s*:\s*(?:\[)?([\d.]+)(?:\])?", audit_result)
+    # Regex diperkuat untuk menangkap berbagai variasi penulisan skor
+    score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", audit_result, re.IGNORECASE)
     raw_score = float(score_match.group(1)) if score_match else 0.0
     score = raw_score / 10 if raw_score > 10 else raw_score
     
@@ -150,10 +145,12 @@ def extract_and_save_tasks(audit_result, nickname):
         content = match.group(1)
         lines = re.findall(r"[-*]\s*(.+)", content)
         for line in lines:
-            clean_task = re.split(r"[:]", line)[0].strip()
+            # Membersihkan tag deadline [YYYY-MM-DD] dari nama tugas agar tidak kotor di database
+            clean_task = re.sub(r"\[.*?\]", "", line).split(":")[0].strip()
             clean_task = clean_task.replace("*", "").replace("_", "").replace("#", "").strip()
             clean_task = re.sub(r"^(Kamu harus |Anda perlu |Pastikan |Lakukan |Segera |Harap |Silakan )", "", clean_task, flags=re.IGNORECASE)
             clean_task = clean_task[0].upper() + clean_task[1:] if len(clean_task) > 0 else clean_task
+            
             if 5 < len(clean_task) < 120:
                 supabase.table("pending_tasks").insert({
                     "user_id": nickname,
@@ -167,7 +164,7 @@ def extract_and_save_tasks(audit_result, nickname):
 consultant = Agent(
     role='Expert Strategy Consultant',
     goal='Memberikan observasi teknis dan meminta data pendukung untuk solusi.',
-    backstory="""Kamu konsultan senior. Analisa celah mereka dan minta foto/data spesifik agar kamu bisa menghitung solusi. Gunakan 'kamu'.""",
+    backstory="""Kamu konsultan senior. Analisa celah mereka dan minta foto/data spesifik. Gunakan 'kamu'.""",
     llm=llm_gemini,
     allow_delegation=False
 )
@@ -175,9 +172,8 @@ consultant = Agent(
 architect = Agent(
     role='Meta-Strategy Architect',
     goal='Memberikan blueprint solusi teknis berdasarkan histori dan data saat ini.',
-    backstory="""Kamu arsitek strategi yang memiliki ingatan jangka panjang. 
-    Gunakan SKOR_FINAL: [0.0 - 10.0]. Jika rasio keberhasilan user rendah, berikan teguran objektif. 
-    Wajib ada section '### ACTION_ITEMS'.""",
+    backstory="""Kamu arsitek strategi dengan ingatan jangka panjang. 
+    Wajib memberikan SKOR_FINAL: [0.0 - 10.0] dan section '### ACTION_ITEMS'.""",
     llm=llm_gemini,
     allow_delegation=False
 )
@@ -212,9 +208,9 @@ if page == "Audit & Konsultasi":
         st.warning("""
         ### **🛠️ Panduan Operasional Konsultasi**
         1. **Input Tantangan**: Jelaskan kendala teknis atau rencana strategismu secara detail.
-        2. **Lampirkan Bukti**: Gunakan fitur upload untuk menyertakan screenshot data atau foto situasi.
-        3. **Interaksi Ahli**: Jawab permintaan data dari AI Consultant untuk mempertajam diagnosis.
-        4. **Eksekusi**: Cek sidebar kiri untuk daftar tugas nyata yang harus kamu selesaikan.
+        2. **Lampirkan Bukti**: Gunakan fitur upload untuk menyertakan screenshot data.
+        3. **Interaksi Ahli**: Jawab permintaan data dari AI Consultant.
+        4. **Eksekusi**: Cek sidebar kiri untuk daftar tugas nyata.
         """)
         u_in = st.text_area("Apa tantangan teknis atau rencana yang ingin kamu audit?", height=120)
         u_files = st.file_uploader("Upload Bukti Visual/Data (Opsional)", accept_multiple_files=True)
@@ -233,7 +229,7 @@ if page == "Audit & Konsultasi":
         with st.spinner("Konsultan sedang menyusun observasi..."):
             hist_str = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
             task_q = Task(
-                description=f"Masalah: {st.session_state.initial_tasks}. History: {hist_str}.",
+                description=f"HARI INI: {datetime.now().strftime('%Y-%m-%d')}. Masalah: {st.session_state.initial_tasks}. History: {hist_str}.",
                 agent=consultant,
                 expected_output="Satu permintaan data spesifik."
             )
@@ -254,13 +250,29 @@ if page == "Audit & Konsultasi":
 
     elif st.session_state.audit_stage == 'report':
         with st.spinner("Membangun Blueprint Solusi..."):
+            # PERBAIKAN: Suntikan tanggal hari ini (2026)
+            today_str = datetime.now().strftime('%Y-%m-%d')
             past_context = get_user_context(user_nickname)
             full_hist = f"Input: {st.session_state.initial_tasks}\n" + "\n".join([f"Q{i+1}: {h['q']}\nA: {h['a']}" for i, h in enumerate(st.session_state.chat_history)])
             
             task_fin = Task(
-                description=f"""Analisa data saat ini dengan mempertimbangkan histori berikut: {past_context}\nINTERAKSI SAAT INI:\n{full_hist}\nWajib SKOR_FINAL: [angka] dan section '### ACTION_ITEMS'.""",
+                description=f"""
+                KONTEKS WAKTU: Hari ini adalah {today_str}. Gunakan tahun 2026 dalam semua deadline.
+                
+                HISTORI USER:
+                {past_context}
+                
+                INTERAKSI SAAT INI:
+                {full_hist}
+                
+                TUGAS:
+                1. Berikan blueprint solusi strategis.
+                2. Berikan SKOR_FINAL: [0.0 - 10.0].
+                3. Wajib ada section '### ACTION_ITEMS' dengan format: [Deadline: YYYY-MM-DD] Nama Tugas: Penjelasan singkat.
+                Semua deadline harus jatuh pada tahun 2026.
+                """,
                 agent=architect,
-                expected_output="Laporan blueprint solusi strategis dengan analisa histori."
+                expected_output="Laporan blueprint solusi strategis dengan deadline tahun 2026."
             )
             res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
             st.markdown(res)
@@ -268,11 +280,10 @@ if page == "Audit & Konsultasi":
             save_audit_to_db(st.session_state.initial_tasks, res, user_nickname)
             extract_and_save_tasks(res, user_nickname)
             
-            # FITUR PDF EXPORT
             st.markdown("---")
             try:
                 p_tasks = supabase.table("pending_tasks").select("task_name").eq("user_id", user_nickname).eq("status", "Pending").execute().data
-                score_match = re.search(r"SKOR_FINAL\s*:\s*(?:\[)?([\d.]+)(?:\])?", res)
+                score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", res, re.IGNORECASE)
                 final_score = score_match.group(1) if score_match else "0.0"
                 
                 pdf_bytes = generate_pdf(user_nickname, res, final_score, p_tasks)
