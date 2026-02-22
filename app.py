@@ -112,7 +112,9 @@ def generate_pdf(nickname, report_text, score, tasks):
         pdf.cell(0, 10, txt="OPERATIONAL CHECKLIST (PENDING):", ln=True)
         pdf.set_font("Arial", size=10)
         for i, t in enumerate(tasks, 1):
-            pdf.multi_cell(0, 5, txt=f"{i}. [ ] {clean_text(t['task_name'])}")
+            # FIX: Gunakan multi_cell agar tidak menabrak margin 
+            task_txt = f"{i}. [ ] {clean_text(t['task_name'])}"
+            pdf.multi_cell(0, 5, txt=task_txt)
             
     return pdf.output(dest='S').encode('latin-1')
 
@@ -126,7 +128,6 @@ def process_images(files):
 
 def save_audit_to_db(user_input, audit_result, nickname):
     if st.session_state.data_saved: return 
-    # Regex diperkuat untuk menangkap berbagai variasi penulisan skor
     score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", audit_result, re.IGNORECASE)
     raw_score = float(score_match.group(1)) if score_match else 0.0
     score = raw_score / 10 if raw_score > 10 else raw_score
@@ -140,18 +141,24 @@ def save_audit_to_db(user_input, audit_result, nickname):
     st.session_state.data_saved = True
 
 def extract_and_save_tasks(audit_result, nickname):
+    """PERBAIKAN: Filter ketat untuk mencegah penangkapan teks sampah ."""
     match = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", audit_result, re.DOTALL | re.IGNORECASE)
     if match:
         content = match.group(1)
         lines = re.findall(r"[-*]\s*(.+)", content)
         for line in lines:
-            # Membersihkan tag deadline [YYYY-MM-DD] dari nama tugas agar tidak kotor di database
+            # FIX: Filter metadata sampah [cite: 64, 72-76]
+            illegal = ["deadline", "catatan", "skor", "laporan", "evaluasi"]
+            if any(word in line.lower() for word in illegal) and ":" not in line:
+                continue
+            
+            # FIX: Hilangkan kurung siku [] dari nama tugas 
             clean_task = re.sub(r"\[.*?\]", "", line).split(":")[0].strip()
             clean_task = clean_task.replace("*", "").replace("_", "").replace("#", "").strip()
             clean_task = re.sub(r"^(Kamu harus |Anda perlu |Pastikan |Lakukan |Segera |Harap |Silakan )", "", clean_task, flags=re.IGNORECASE)
             clean_task = clean_task[0].upper() + clean_task[1:] if len(clean_task) > 0 else clean_task
             
-            if 5 < len(clean_task) < 120:
+            if 10 < len(clean_task) < 120:
                 supabase.table("pending_tasks").insert({
                     "user_id": nickname,
                     "task_name": clean_task,
@@ -159,12 +166,12 @@ def extract_and_save_tasks(audit_result, nickname):
                 }).execute()
 
 # ==========================================
-# 3. AGENT SETUP
+# 3. AGENT SETUP (REVERTED TO ORIGINAL ROLES) 
 # ==========================================
 consultant = Agent(
     role='Expert Strategy Consultant',
     goal='Memberikan observasi teknis dan meminta data pendukung untuk solusi.',
-    backstory="""Kamu konsultan senior. Analisa celah mereka dan minta foto/data spesifik. Gunakan 'kamu'.""",
+    backstory="""Kamu konsultan senior. Analisa celah mereka dan minta foto/data spesifik agar kamu bisa menghitung solusi. Gunakan 'kamu'.""",
     llm=llm_gemini,
     allow_delegation=False
 )
@@ -172,7 +179,7 @@ consultant = Agent(
 architect = Agent(
     role='Meta-Strategy Architect',
     goal='Memberikan blueprint solusi teknis berdasarkan histori dan data saat ini.',
-    backstory="""Kamu arsitek strategi dengan ingatan jangka panjang. 
+    backstory="""Kamu arsitek strategi yang memiliki ingatan jangka panjang. 
     Wajib memberikan SKOR_FINAL: [0.0 - 10.0] dan section '### ACTION_ITEMS'.""",
     llm=llm_gemini,
     allow_delegation=False
@@ -181,13 +188,19 @@ architect = Agent(
 # ==========================================
 # 4. TAMPILAN WEB
 # ==========================================
-st.set_page_config(page_title="Strategic Auditor V8.9", layout="wide")
+st.set_page_config(page_title="Strategic Auditor V8.9", layout="wide") # 
 user_nickname = st.sidebar.text_input("Identitas:", value="Guest").strip()
 page = st.sidebar.radio("Navigasi:", ["Audit & Konsultasi", "Dashboard"])
 
 # Sidebar Checklist
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"### 📋 Checklist: {user_nickname}")
+
+# FIX: Tombol Purge Tasks 
+if st.sidebar.button("🗑️ Hapus Semua Tugas Mangkrak"):
+    supabase.table("pending_tasks").delete().eq("user_id", user_nickname).eq("status", "Pending").execute()
+    st.sidebar.success("Checklist dibersihkan!")
+    st.rerun()
 
 res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").execute()
 pending = res_tasks.data
@@ -201,16 +214,16 @@ else:
     st.sidebar.success("Tidak ada tugas pending. 🚀")
 
 if page == "Audit & Konsultasi":
-    st.title(f"Strategic Consultant AI: {user_nickname}")
+    st.title(f"Strategic Consultant AI: {user_nickname}") # 
     st.markdown("---")
 
     if st.session_state.audit_stage == 'input':
         st.warning("""
         ### **🛠️ Panduan Operasional Konsultasi**
         1. **Input Tantangan**: Jelaskan kendala teknis atau rencana strategismu secara detail.
-        2. **Lampirkan Bukti**: Gunakan fitur upload untuk menyertakan screenshot data.
-        3. **Interaksi Ahli**: Jawab permintaan data dari AI Consultant.
-        4. **Eksekusi**: Cek sidebar kiri untuk daftar tugas nyata.
+        2. **Lampirkan Bukti**: Gunakan fitur upload untuk menyertakan screenshot data atau foto situasi.
+        3. **Interaksi Ahli**: Jawab permintaan data dari AI Consultant untuk mempertajam diagnosis.
+        4. **Eksekusi**: Cek sidebar kiri untuk daftar tugas nyata yang harus kamu selesaikan.
         """)
         u_in = st.text_area("Apa tantangan teknis atau rencana yang ingin kamu audit?", height=120)
         u_files = st.file_uploader("Upload Bukti Visual/Data (Opsional)", accept_multiple_files=True)
@@ -250,14 +263,14 @@ if page == "Audit & Konsultasi":
 
     elif st.session_state.audit_stage == 'report':
         with st.spinner("Membangun Blueprint Solusi..."):
-            # PERBAIKAN: Suntikan tanggal hari ini (2026)
+            # FIX: Jangkar Waktu 2026 
             today_str = datetime.now().strftime('%Y-%m-%d')
             past_context = get_user_context(user_nickname)
             full_hist = f"Input: {st.session_state.initial_tasks}\n" + "\n".join([f"Q{i+1}: {h['q']}\nA: {h['a']}" for i, h in enumerate(st.session_state.chat_history)])
             
             task_fin = Task(
                 description=f"""
-                KONTEKS WAKTU: Hari ini adalah {today_str}. Gunakan tahun 2026 dalam semua deadline.
+                KONTEKS WAKTU: {today_str}. Gunakan tahun 2026 dalam semua deadline.
                 
                 HISTORI USER:
                 {past_context}
@@ -268,7 +281,7 @@ if page == "Audit & Konsultasi":
                 TUGAS:
                 1. Berikan blueprint solusi strategis.
                 2. Berikan SKOR_FINAL: [0.0 - 10.0].
-                3. Wajib ada section '### ACTION_ITEMS' dengan format: [Deadline: YYYY-MM-DD] Nama Tugas: Penjelasan singkat.
+                3. Wajib ada section '### ACTION_ITEMS' dengan format: [Deadline: YYYY-MM-DD] Nama Tugas: Deskripsi.
                 Semua deadline harus jatuh pada tahun 2026.
                 """,
                 agent=architect,
