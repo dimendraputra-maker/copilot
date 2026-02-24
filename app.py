@@ -140,62 +140,58 @@ def save_audit_to_db(user_input, audit_result, nickname):
     st.session_state.data_saved = True
 
 def extract_and_save_tasks(audit_result, nickname):
-    """Filter ketat untuk mencegah penangkapan teks sampah & membatasi jumlah tugas."""
-    match = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", audit_result, re.DOTALL | re.IGNORECASE)
-    if match:
-        content = match.group(1)
-        lines = re.findall(r"[-*]\s*(.+)", content)
-        saved_count = 0
-        for line in lines:
-            if saved_count >= 5: break # LIMIT: Maksimal 5 tugas relevan
-            
-            illegal = ["deadline", "catatan", "skor", "laporan", "evaluasi"]
-            if any(word in line.lower() for word in illegal) and ":" not in line:
-                continue
-            
-            clean_task = re.sub(r"\[.*?\]", "", line).split(":")[0].strip()
-            clean_task = clean_task.replace("*", "").replace("_", "").replace("#", "").strip()
-            clean_task = re.sub(r"^(Kamu harus |Anda perlu |Pastikan |Lakukan |Segera |Harap |Silakan )", "", clean_task, flags=re.IGNORECASE)
-            clean_task = clean_task[0].upper() + clean_task[1:] if len(clean_task) > 0 else clean_task
-            
-            if 10 < len(clean_task) < 120:
+    """Pembersih agresif untuk menghapus 'sampah' visual di sidebar."""
+    # Mencari baris yang diawali dengan bullet points (* atau -)
+    raw_lines = re.findall(r"[-*]\s*(.+)", audit_result)
+    saved_count = 0
+    
+    for line in raw_lines:
+        if saved_count >= 5: break
+        
+        # 1. Hapus total semua teks di dalam kurung (...) atau [...]
+        # Ini akan membersihkan residu "(Deadline" yang mengotori sidebar
+        clean_text = re.sub(r"[\(\[].*?[\)\]]", "", line).strip()
+        
+        # 2. Hapus teks sisa jika AI menuliskan "Deadline: ..." tanpa kurung
+        clean_text = re.split(r"deadline", clean_text, flags=re.IGNORECASE)[0].strip()
+        
+        # 3. Hilangkan karakter markdown (bintang, pagar, titik dua di akhir)
+        clean_text = clean_text.replace("*", "").replace("#", "").rstrip(":").strip()
+        
+        # 4. Filter kualitas: Nama tugas harus ringkas dan relevan
+        if 15 < len(clean_text) < 80:
+            if not any(x in clean_text.lower() for x in ["skor", "laporan", "kategori", "blueprint", "evaluasi"]):
                 supabase.table("pending_tasks").insert({
                     "user_id": nickname,
-                    "task_name": clean_task,
+                    "task_name": clean_text,
                     "status": "Pending"
                 }).execute()
                 saved_count += 1
-
 # ==========================================
-# 3. AGENT SETUP (V9.0 - BOTTLENECK STRATEGIST)
+# 3. AGENT SETUP (V9.1 - HARD-TRUTH AUDITOR)
 # ==========================================
 consultant = Agent(
-    role='Lead Bottleneck Auditor',
-    goal='Mendiagnosa variabel penghambat utama dengan data primer atau estimasi rentang waktu.',
-    backstory="""Kamu adalah auditor strategis yang bekerja dengan prinsip 'Low Friction, High Signal'. 
-    
-    PROTOKOL INTEROGASI:
-    1. PRIORITAS DATA: Selalu minta bukti visual (foto/screenshot) terlebih dahulu sebagai jangkar fakta.
-    2. ALTERNATIF FRIKSI: Jika data visual tersebut kemungkinan besar tidak dimiliki user (seperti log 3 hari), kamu WAJIB menawarkan 'Metode Estimasi Cepat' (misal: sebutkan waktu tercepat vs terlama).
-    3. PENJELASAN LOGIS: Sertakan 'Logika Teknis' pada setiap pertanyaan agar user paham kaitan data dengan solusi.
-    4. ANTI-ASUMSI: Setiap melihat foto, tanyakan niat di baliknya (Mengapa kamu melakukannya seperti itu?) untuk menghindari diagnosa yang dangkal.
-    
-    Gunakan gaya bahasa lugas, dingin, dan objektif. Jangan gunakan kalimat apresiasi.""",
+    role='Expert Tactical Auditor',
+    goal='Mendiagnosa bottleneck melalui data variansi dan bukti artefak.',
+    backstory="""Kamu auditor teknis yang dingin. Dilarang memberikan apresiasi atau basa-basi. 
+    Tugasmu adalah meminta data (foto/estimasi) dan memberikan 'Logika Teknis' di baliknya.
+    Gunakan 'saya' dan 'kamu'. Fokus pada fakta bahwa variansi waktu adalah bukti inefisiensi kognitif.""",
     llm=llm_gemini,
     allow_delegation=False
 )
 
 architect = Agent(
-    role='High-Leverage Solutions Architect',
-    goal='Menentukan satu titik ungkit (Leverage Point) yang menyelesaikan 80% masalah.',
-    backstory="""Kamu adalah arsitek strategi yang hanya percaya pada sinkronisasi antara artefak fisik dan penjelasan user.
-    Tugasmu adalah membuang 80% saran umum dan fokus pada 20% tindakan teknis yang berdampak masif.
-    Setiap solusi harus didasarkan pada audit bottleneck yang dilakukan consultant.
-    Wajib memberikan SKOR_FINAL: [0.0 - 10.0] dan maksimal 5 ### ACTION_ITEMS.""",
+    role='Meta-Strategy Architect',
+    goal='Menyusun sistem habit dan tugas teknis tanpa mencampuradukkannya.',
+    backstory="""Kamu arsitek strategi yang sangat pelit skor. Skor 8.0+ hanya untuk sistem yang hampir sempurna. 
+    ATURAN OUTPUT:
+    1. HABIT_SYSTEMS: Perubahan perilaku berkelanjutan. TIDAK BOLEH ADA DEADLINE.
+    2. PROJECT_TASKS: Tindakan teknis satu kali (misal: beli barang). WAJIB ADA DEADLINE 2026.
+    Jangan berikan saran aplikasi jika solusi fisik lebih efektif. 
+    Wajib memberikan SKOR_FINAL: [0.0 - 10.0] dan maksimal 5 '### ACTION_ITEMS' yang konkret.""",
     llm=llm_gemini,
     allow_delegation=False
 )
-
 # ==========================================
 # 4. TAMPILAN WEB
 # ==========================================
@@ -279,16 +275,19 @@ if page == "Audit & Konsultasi":
             
             task_fin = Task(
                 description=f"""
-                KONTEKS WAKTU: {today_str}. Gunakan tahun 2026 dalam semua deadline.
-                FOKUS: Identifikasi bottleneck utama dan berikan tindakan berdampak tinggi.
+                KONTEKS WAKTU: {today_str}. 
+                FOKUS: Identifikasi bottleneck utama berdasarkan interaksi.
                 
                 HISTORI: {past_context}
                 INTERAKSI: {full_hist}
                 
-                Wajib ada SKOR_FINAL: [0.0 - 10.0] dan maksimal 5 '### ACTION_ITEMS' yang konkret.
+                Wajib memberikan SKOR_FINAL: [0.0 - 10.0].
+                Pisahkan output solusi menjadi dua kategori di bawah header '### ACTION_ITEMS':
+                1. HABIT_SYSTEMS (Tanpa deadline).
+                2. PROJECT_TASKS (Wajib deadline 2026).
                 """,
                 agent=architect,
-                expected_output="Laporan blueprint solusi strategis dengan deadline tahun 2026."
+                expected_output="Laporan blueprint solusi dengan pemisahan Habit dan Task."
             )
             res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
             st.markdown(res)
