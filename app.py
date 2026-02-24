@@ -141,46 +141,36 @@ def save_audit_to_db(user_input, audit_result, nickname):
     st.session_state.data_saved = True
 
 def extract_and_save_tasks(audit_result, nickname):
-    """Mengekstraksi Judul dan Deskripsi sambil membuang Label Kategori."""
+    """Logika Ekstraksi Positif: Hanya mengambil baris berformat **Judul**: Deskripsi."""
     match = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", audit_result, re.DOTALL | re.IGNORECASE)
     if not match: return
     
     content = match.group(1)
-    lines = re.findall(r"[-*]\s*(.+)", content)
+    
+    # REGEX POSITIF: Mencari baris yang punya Judul Tebal DAN Deskripsi (ada titik dua)
+    # Format yang divalidasi: **Nama Tugas**: Penjelasan
+    valid_tasks = re.findall(r"\*\*(.+?)\*\*[:\-]\s*(.+)", content)
+    
     saved_count = 0
-    
-    # Kata-kata yang harus dilarang jadi Judul Tugas
-    forbidden_headers = ["habit_systems", "project_tasks", "action_items", "skor", "laporan"]
-    
-    for line in lines:
-        if saved_count >= 6: break # Maksimal 6 agar sidebar tidak terlalu panjang
+    for title, desc in valid_tasks:
+        if saved_count >= 6: break
         
-        # 1. Pembersihan residu Deadline (Scorched Earth)
-        line = re.sub(r"\(?deadline.*", "", line, flags=re.IGNORECASE).strip()
-        line = line.rstrip("(").rstrip("[").strip()
-        
-        # 2. Split Judul dan Deskripsi
-        if ":" in line:
-            parts = line.split(":", 1)
-            title = parts[0].strip()
-            desc = parts[1].strip()
-        else:
-            title = line.strip()
-            desc = "Eksekusi sesuai prosedur audit."
+        # Pembersihan residu teks
+        clean_title = title.strip()
+        # Hapus sisa teks deadline atau residu kurung dari deskripsi
+        clean_desc = re.sub(r"\(?deadline.*", "", desc, flags=re.IGNORECASE).strip()
+        clean_desc = clean_desc.rstrip("(").rstrip("[").strip()
 
-        # 3. Filter Header: Jangan simpan jika judulnya cuma label kategori
-        clean_title = title.replace("*", "").replace("#", "").strip()
-        if clean_title.lower() in forbidden_headers or len(clean_title) < 5:
-            continue
-
-        # 4. Simpan ke database
-        full_data = f"{clean_title} | {desc.replace('*', '').strip()}"
-        supabase.table("pending_tasks").insert({
-            "user_id": nickname,
-            "task_name": full_data,
-            "status": "Pending"
-        }).execute()
-        saved_count += 1
+        # Validasi Struktural: Pastikan bukan label kategori dan memiliki bobot informasi
+        if len(clean_title) > 5 and len(clean_desc) > 10:
+            full_data = f"{clean_title} | {clean_desc}"
+            
+            supabase.table("pending_tasks").insert({
+                "user_id": nickname,
+                "task_name": full_data,
+                "status": "Pending"
+            }).execute()
+            saved_count += 1
 
 # ==========================================
 # 3. AGENT SETUP (V9.2 - STRATEGIC ARCHITECT)
@@ -196,12 +186,18 @@ consultant = Agent(
 )
 
 architect = Agent(
-    role='System Architect',
-    goal='Menyusun solusi dengan format Judul: Deskripsi tanpa kata Deadline di dalam baris.',
-    backstory="""Kamu arsitek strategi yang dingin. 
-    Wajib menggunakan format '- **Nama Tugas**: Deskripsi singkat' di bawah ### ACTION_ITEMS.
-    Dilarang keras menulis kata 'Deadline' di dalam baris bullet point agar tidak mengotori sidebar.
-    Pemisahan: 1. HABIT_SYSTEMS (Tanpa deadline). 2. PROJECT_TASKS (Deadline 2026 di akhir laporan).""",
+    role='High-Leverage Solutions Architect',
+    goal='Hanya memberikan tugas dengan daya ungkit tinggi dalam format yang kaku.',
+    backstory="""Kamu arsitek yang benci inefisiensi. 
+    Wajib memberikan output ### ACTION_ITEMS dengan format:
+    - **Nama Tugas**: Deskripsi teknis singkat tentang kenapa/bagaimana melakukan tugas ini.
+    
+    ATURAN KETAT:
+    1. Gunakan format **Judul**: Deskripsi untuk setiap poin tugas.
+    2. Dilarang menggunakan simbol bullet pada header kategori (HABIT_SYSTEMS atau PROJECT_TASKS).
+    3. Jangan berikan tugas sampah administratif. Fokus pada 20% tindakan untuk 80% hasil.
+    4. HABIT_SYSTEMS: Tanpa deadline. 
+    5. PROJECT_TASKS: Wajib deadline 2026 di akhir baris laporan (bukan di dalam baris checklist).""",
     llm=llm_gemini,
     allow_delegation=False
 )
@@ -209,7 +205,7 @@ architect = Agent(
 # ==========================================
 # 4. TAMPILAN WEB
 # ==========================================
-st.set_page_config(page_title="Strategic Auditor V8.9", layout="wide")
+st.set_page_config(page_title="Strategic Auditor V9.2", layout="wide")
 user_nickname = st.sidebar.text_input("Identitas:", value="Guest").strip()
 page = st.sidebar.radio("Navigasi:", ["Audit & Konsultasi", "Dashboard"])
 
@@ -225,7 +221,6 @@ if st.sidebar.button("🗑️ Hapus Semua Tugas Mangkrak"):
 res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").execute()
 pending = res_tasks.data
 
-# Di dalam Section 4 (Sidebar Checklist)
 if pending:
     for task in pending:
         if "|" in task['task_name']:
@@ -233,14 +228,15 @@ if pending:
         else:
             title, desc = task['task_name'], "Eksekusi segera."
             
-        # UI Rapi dengan Spasi Terukur
-        st.sidebar.markdown(f"### {title}") # Gunakan H3 untuk judul agar lebih menonjol
-        st.sidebar.write(desc) # Deskripsi dengan teks standar agar mudah dibaca
+        st.sidebar.markdown(f"### {title}") 
+        st.sidebar.write(desc) 
             
         if st.sidebar.button(f"Selesaikan Tugas", key=f"btn_{task['id']}", use_container_width=True):
             supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", task['id']).execute()
             st.rerun()
         st.sidebar.markdown("---")
+else:
+    st.sidebar.success("Tidak ada tugas pending. 🚀")
 
 if page == "Audit & Konsultasi":
     st.title(f"Lead Auditor AI: {user_nickname}")
@@ -305,12 +301,13 @@ if page == "Audit & Konsultasi":
                 INTERAKSI: {full_hist}
                 
                 Wajib memberikan SKOR_FINAL: [0.0 - 10.0].
-                Pisahkan output solusi menjadi dua kategori di bawah header '### ACTION_ITEMS' dengan format Judul: Deskripsi:
+                Format tugas di bawah header '### ACTION_ITEMS' WAJIB menggunakan format **Judul**: Deskripsi.
+                Pisahkan menjadi:
                 1. HABIT_SYSTEMS (Tanpa deadline).
                 2. PROJECT_TASKS (Wajib deadline 2026).
                 """,
                 agent=architect,
-                expected_output="Laporan blueprint solusi dengan pemisahan Habit dan Task."
+                expected_output="Laporan blueprint solusi dengan format tugas yang divalidasi sistem."
             )
             res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
             st.markdown(res)
