@@ -112,7 +112,8 @@ def generate_pdf(nickname, report_text, score, tasks):
         pdf.cell(0, 10, txt="OPERATIONAL CHECKLIST (PENDING):", ln=True)
         pdf.set_font("Arial", size=10)
         for i, t in enumerate(tasks, 1):
-            task_txt = f"{i}. [ ] {clean_text(t['task_name'])}"
+            name = t['task_name'].split("|")[0] if "|" in t['task_name'] else t['task_name']
+            task_txt = f"{i}. [ ] {clean_text(name)}"
             pdf.multi_cell(0, 5, txt=task_txt)
             
     return pdf.output(dest='S').encode('latin-1')
@@ -140,35 +141,47 @@ def save_audit_to_db(user_input, audit_result, nickname):
     st.session_state.data_saved = True
 
 def extract_and_save_tasks(audit_result, nickname):
-    """Pembersih agresif untuk menghapus 'sampah' visual di sidebar."""
-    # Mencari baris yang diawali dengan bullet points (* atau -)
-    raw_lines = re.findall(r"[-*]\s*(.+)", audit_result)
+    """Mengekstraksi Judul dan Deskripsi untuk checklist yang rapi."""
+    match = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", audit_result, re.DOTALL | re.IGNORECASE)
+    if not match: return
+    
+    content = match.group(1)
+    lines = re.findall(r"[-*]\s*(.+)", content)
     saved_count = 0
     
-    for line in raw_lines:
+    for line in lines:
         if saved_count >= 5: break
         
-        # 1. Hapus total semua teks di dalam kurung (...) atau [...]
-        # Ini akan membersihkan residu "(Deadline" yang mengotori sidebar
-        clean_text = re.sub(r"[\(\[].*?[\)\]]", "", line).strip()
+        # 1. Bersihkan semua teks di dalam kurung (Deadline, dll) secara total
+        line = re.sub(r"[\(\[].*?[\)\]]", "", line).strip()
         
-        # 2. Hapus teks sisa jika AI menuliskan "Deadline: ..." tanpa kurung
-        clean_text = re.split(r"deadline", clean_text, flags=re.IGNORECASE)[0].strip()
+        # 2. Bedah Judul dan Deskripsi berdasarkan titik dua (:)
+        if ":" in line:
+            parts = line.split(":", 1)
+            title = parts[0].strip()
+            desc = parts[1].strip()
+        else:
+            title = line.strip()
+            desc = "Eksekusi segera sesuai instruksi laporan."
+
+        # 3. Pembersihan Karakter Markdown
+        title = title.replace("*", "").replace("#", "").strip()
+        desc = desc.replace("*", "").strip()
         
-        # 3. Hilangkan karakter markdown (bintang, pagar, titik dua di akhir)
-        clean_text = clean_text.replace("*", "").replace("#", "").rstrip(":").strip()
-        
-        # 4. Filter kualitas: Nama tugas harus ringkas dan relevan
-        if 15 < len(clean_text) < 80:
-            if not any(x in clean_text.lower() for x in ["skor", "laporan", "kategori", "blueprint", "evaluasi"]):
+        # 4. Validasi Kualitas Nama Tugas
+        if 10 < len(title) < 100:
+            if not any(x in title.lower() for x in ["skor", "laporan", "blueprint", "evaluasi"]):
+                # Simpan dengan format pipe agar mudah dipisah di UI
+                full_task_data = f"{title} | {desc}"
                 supabase.table("pending_tasks").insert({
                     "user_id": nickname,
-                    "task_name": clean_text,
+                    "task_name": full_task_data,
                     "status": "Pending"
                 }).execute()
                 saved_count += 1
+
 # ==========================================
-# 3. AGENT SETUP (V9.1 - HARD-TRUTH AUDITOR)
+# 3. AGENT SETUP (V9.2 - STRATEGIC ARCHITECT)
 # ==========================================
 consultant = Agent(
     role='Expert Tactical Auditor',
@@ -182,16 +195,19 @@ consultant = Agent(
 
 architect = Agent(
     role='Meta-Strategy Architect',
-    goal='Menyusun sistem habit dan tugas teknis tanpa mencampuradukkannya.',
-    backstory="""Kamu arsitek strategi yang sangat pelit skor. Skor 8.0+ hanya untuk sistem yang hampir sempurna. 
-    ATURAN OUTPUT:
-    1. HABIT_SYSTEMS: Perubahan perilaku berkelanjutan. TIDAK BOLEH ADA DEADLINE.
-    2. PROJECT_TASKS: Tindakan teknis satu kali (misal: beli barang). WAJIB ADA DEADLINE 2026.
-    Jangan berikan saran aplikasi jika solusi fisik lebih efektif. 
-    Wajib memberikan SKOR_FINAL: [0.0 - 10.0] dan maksimal 5 '### ACTION_ITEMS' yang konkret.""",
+    goal='Menyusun sistem habit dan tugas teknis dengan struktur Judul: Deskripsi.',
+    backstory="""Kamu arsitek strategi yang dingin dan objektif. 
+    Wajib memberikan output pada bagian ### ACTION_ITEMS dengan format:
+    - **Nama Tugas**: Penjelasan singkat kenapa ini penting.
+    
+    ATURAN:
+    1. HABIT_SYSTEMS: Tanpa deadline. Fokus pada sistem berkelanjutan.
+    2. PROJECT_TASKS: Wajib deadline 2026. Fokus pada tindakan sekali jalan.
+    Jangan berikan kalimat apresiasi. Jangan berikan tugas sampah administratif.""",
     llm=llm_gemini,
     allow_delegation=False
 )
+
 # ==========================================
 # 4. TAMPILAN WEB
 # ==========================================
@@ -213,9 +229,21 @@ pending = res_tasks.data
 
 if pending:
     for task in pending:
-        if st.sidebar.checkbox(task['task_name'], key=f"db_{task['id']}"):
+        # Memecah Judul dan Deskripsi
+        if "|" in task['task_name']:
+            title, desc = task['task_name'].split("|", 1)
+        else:
+            title, desc = task['task_name'], ""
+            
+        # UI Sidebar: Judul Tebal + Deskripsi Kecil
+        st.sidebar.markdown(f"**{title}**")
+        if desc:
+            st.sidebar.caption(desc)
+            
+        if st.sidebar.button(f"Selesai", key=f"btn_{task['id']}"):
             supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", task['id']).execute()
             st.rerun()
+        st.sidebar.markdown("---")
 else:
     st.sidebar.success("Tidak ada tugas pending. 🚀")
 
@@ -250,7 +278,7 @@ if page == "Audit & Konsultasi":
             task_q = Task(
                 description=f"HARI INI: {datetime.now().strftime('%Y-%m-%d')}. Masalah: {st.session_state.initial_tasks}. History: {hist_str}.",
                 agent=consultant,
-                expected_output="Satu permintaan data teknis spesifik."
+                expected_output="Satu permintaan data teknis spesifik disertai Logika Teknis."
             )
             current_q = str(Crew(agents=[consultant], tasks=[task_q]).kickoff().raw)
         
@@ -282,12 +310,12 @@ if page == "Audit & Konsultasi":
                 INTERAKSI: {full_hist}
                 
                 Wajib memberikan SKOR_FINAL: [0.0 - 10.0].
-                Pisahkan output solusi menjadi dua kategori di bawah header '### ACTION_ITEMS':
+                Pisahkan output solusi menjadi dua kategori di bawah header '### ACTION_ITEMS' dengan format Judul: Deskripsi:
                 1. HABIT_SYSTEMS (Tanpa deadline).
                 2. PROJECT_TASKS (Wajib deadline 2026).
                 """,
                 agent=architect,
-                expected_output="Laporan blueprint solusi dengan pemisahan Habit dan Task."
+                expected_output="Laporan blueprint solusi strategis dengan pemisahan Habit dan Task."
             )
             res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
             st.markdown(res)
