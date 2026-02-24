@@ -141,7 +141,7 @@ def save_audit_to_db(user_input, audit_result, nickname):
     st.session_state.data_saved = True
 
 def extract_and_save_tasks(audit_result, nickname):
-    """Mengekstraksi Judul dan Deskripsi untuk checklist yang rapi."""
+    """Mengekstraksi Judul dan Deskripsi tanpa residu teks Deadline."""
     match = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", audit_result, re.DOTALL | re.IGNORECASE)
     if not match: return
     
@@ -152,8 +152,9 @@ def extract_and_save_tasks(audit_result, nickname):
     for line in lines:
         if saved_count >= 5: break
         
-        # 1. Bersihkan semua teks di dalam kurung (Deadline, dll) secara total
-        line = re.sub(r"[\(\[].*?[\)\]]", "", line).strip()
+        # 1. Hapus paksa kata 'deadline' dan residu kurung yang gagal ditutup AI
+        line = re.sub(r"\(?deadline.*", "", line, flags=re.IGNORECASE).strip()
+        line = line.rstrip("(").rstrip("[").strip()
         
         # 2. Bedah Judul dan Deskripsi berdasarkan titik dua (:)
         if ":" in line:
@@ -162,23 +163,21 @@ def extract_and_save_tasks(audit_result, nickname):
             desc = parts[1].strip()
         else:
             title = line.strip()
-            desc = "Eksekusi segera sesuai instruksi laporan."
+            desc = "Eksekusi segera sesuai prosedur audit."
 
-        # 3. Pembersihan Karakter Markdown
-        title = title.replace("*", "").replace("#", "").strip()
-        desc = desc.replace("*", "").strip()
+        # 3. Bersihkan simbol markdown
+        title = title.replace("**", "").replace("*", "").replace("#", "").strip()
+        desc = desc.replace("**", "").replace("*", "").strip()
         
-        # 4. Validasi Kualitas Nama Tugas
+        # 4. Simpan dengan format pipe untuk UI sidebar
         if 10 < len(title) < 100:
-            if not any(x in title.lower() for x in ["skor", "laporan", "blueprint", "evaluasi"]):
-                # Simpan dengan format pipe agar mudah dipisah di UI
-                full_task_data = f"{title} | {desc}"
-                supabase.table("pending_tasks").insert({
-                    "user_id": nickname,
-                    "task_name": full_task_data,
-                    "status": "Pending"
-                }).execute()
-                saved_count += 1
+            full_data = f"{title} | {desc}"
+            supabase.table("pending_tasks").insert({
+                "user_id": nickname,
+                "task_name": full_data,
+                "status": "Pending"
+            }).execute()
+            saved_count += 1
 
 # ==========================================
 # 3. AGENT SETUP (V9.2 - STRATEGIC ARCHITECT)
@@ -194,16 +193,12 @@ consultant = Agent(
 )
 
 architect = Agent(
-    role='Meta-Strategy Architect',
-    goal='Menyusun sistem habit dan tugas teknis dengan struktur Judul: Deskripsi.',
-    backstory="""Kamu arsitek strategi yang dingin dan objektif. 
-    Wajib memberikan output pada bagian ### ACTION_ITEMS dengan format:
-    - **Nama Tugas**: Penjelasan singkat kenapa ini penting.
-    
-    ATURAN:
-    1. HABIT_SYSTEMS: Tanpa deadline. Fokus pada sistem berkelanjutan.
-    2. PROJECT_TASKS: Wajib deadline 2026. Fokus pada tindakan sekali jalan.
-    Jangan berikan kalimat apresiasi. Jangan berikan tugas sampah administratif.""",
+    role='System Architect',
+    goal='Menyusun solusi dengan format Judul: Deskripsi tanpa kata Deadline di dalam baris.',
+    backstory="""Kamu arsitek strategi yang dingin. 
+    Wajib menggunakan format '- **Nama Tugas**: Deskripsi singkat' di bawah ### ACTION_ITEMS.
+    Dilarang keras menulis kata 'Deadline' di dalam baris bullet point agar tidak mengotori sidebar.
+    Pemisahan: 1. HABIT_SYSTEMS (Tanpa deadline). 2. PROJECT_TASKS (Deadline 2026 di akhir laporan).""",
     llm=llm_gemini,
     allow_delegation=False
 )
@@ -229,16 +224,13 @@ pending = res_tasks.data
 
 if pending:
     for task in pending:
-        # Memecah Judul dan Deskripsi
         if "|" in task['task_name']:
             title, desc = task['task_name'].split("|", 1)
         else:
-            title, desc = task['task_name'], ""
+            title, desc = task['task_name'], "Eksekusi segera."
             
-        # UI Sidebar: Judul Tebal + Deskripsi Kecil
         st.sidebar.markdown(f"**{title}**")
-        if desc:
-            st.sidebar.caption(desc)
+        st.sidebar.caption(desc)
             
         if st.sidebar.button(f"Selesai", key=f"btn_{task['id']}"):
             supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", task['id']).execute()
@@ -315,7 +307,7 @@ if page == "Audit & Konsultasi":
                 2. PROJECT_TASKS (Wajib deadline 2026).
                 """,
                 agent=architect,
-                expected_output="Laporan blueprint solusi strategis dengan pemisahan Habit dan Task."
+                expected_output="Laporan blueprint solusi dengan pemisahan Habit dan Task."
             )
             res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
             st.markdown(res)
