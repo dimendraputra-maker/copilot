@@ -141,7 +141,7 @@ def save_audit_to_db(user_input, audit_result, nickname):
     st.session_state.data_saved = True
 
 def extract_and_save_tasks(audit_result, nickname):
-    """Mengekstraksi Judul dan Deskripsi tanpa residu teks Deadline."""
+    """Mengekstraksi Judul dan Deskripsi sambil membuang Label Kategori."""
     match = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", audit_result, re.DOTALL | re.IGNORECASE)
     if not match: return
     
@@ -149,35 +149,38 @@ def extract_and_save_tasks(audit_result, nickname):
     lines = re.findall(r"[-*]\s*(.+)", content)
     saved_count = 0
     
+    # Kata-kata yang harus dilarang jadi Judul Tugas
+    forbidden_headers = ["habit_systems", "project_tasks", "action_items", "skor", "laporan"]
+    
     for line in lines:
-        if saved_count >= 5: break
+        if saved_count >= 6: break # Maksimal 6 agar sidebar tidak terlalu panjang
         
-        # 1. Hapus paksa kata 'deadline' dan residu kurung yang gagal ditutup AI
+        # 1. Pembersihan residu Deadline (Scorched Earth)
         line = re.sub(r"\(?deadline.*", "", line, flags=re.IGNORECASE).strip()
         line = line.rstrip("(").rstrip("[").strip()
         
-        # 2. Bedah Judul dan Deskripsi berdasarkan titik dua (:)
+        # 2. Split Judul dan Deskripsi
         if ":" in line:
             parts = line.split(":", 1)
             title = parts[0].strip()
             desc = parts[1].strip()
         else:
             title = line.strip()
-            desc = "Eksekusi segera sesuai prosedur audit."
+            desc = "Eksekusi sesuai prosedur audit."
 
-        # 3. Bersihkan simbol markdown
-        title = title.replace("**", "").replace("*", "").replace("#", "").strip()
-        desc = desc.replace("**", "").replace("*", "").strip()
-        
-        # 4. Simpan dengan format pipe untuk UI sidebar
-        if 10 < len(title) < 100:
-            full_data = f"{title} | {desc}"
-            supabase.table("pending_tasks").insert({
-                "user_id": nickname,
-                "task_name": full_data,
-                "status": "Pending"
-            }).execute()
-            saved_count += 1
+        # 3. Filter Header: Jangan simpan jika judulnya cuma label kategori
+        clean_title = title.replace("*", "").replace("#", "").strip()
+        if clean_title.lower() in forbidden_headers or len(clean_title) < 5:
+            continue
+
+        # 4. Simpan ke database
+        full_data = f"{clean_title} | {desc.replace('*', '').strip()}"
+        supabase.table("pending_tasks").insert({
+            "user_id": nickname,
+            "task_name": full_data,
+            "status": "Pending"
+        }).execute()
+        saved_count += 1
 
 # ==========================================
 # 3. AGENT SETUP (V9.2 - STRATEGIC ARCHITECT)
@@ -222,6 +225,7 @@ if st.sidebar.button("🗑️ Hapus Semua Tugas Mangkrak"):
 res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").execute()
 pending = res_tasks.data
 
+# Di dalam Section 4 (Sidebar Checklist)
 if pending:
     for task in pending:
         if "|" in task['task_name']:
@@ -229,15 +233,14 @@ if pending:
         else:
             title, desc = task['task_name'], "Eksekusi segera."
             
-        st.sidebar.markdown(f"**{title}**")
-        st.sidebar.caption(desc)
+        # UI Rapi dengan Spasi Terukur
+        st.sidebar.markdown(f"### {title}") # Gunakan H3 untuk judul agar lebih menonjol
+        st.sidebar.write(desc) # Deskripsi dengan teks standar agar mudah dibaca
             
-        if st.sidebar.button(f"Selesai", key=f"btn_{task['id']}"):
+        if st.sidebar.button(f"Selesaikan Tugas", key=f"btn_{task['id']}", use_container_width=True):
             supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", task['id']).execute()
             st.rerun()
         st.sidebar.markdown("---")
-else:
-    st.sidebar.success("Tidak ada tugas pending. 🚀")
 
 if page == "Audit & Konsultasi":
     st.title(f"Lead Auditor AI: {user_nickname}")
