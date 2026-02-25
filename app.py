@@ -203,31 +203,36 @@ st.set_page_config(page_title="Strategic Auditor V9.3", layout="wide")
 def manage_access(name, password):
     if name == "Guest": return True
     if not password: 
-        st.sidebar.warning("Masukkan Password untuk akses data.")
+        st.sidebar.warning("Masukkan Password.")
         return False
         
-    res = supabase.table("user_access").select("*").eq("username", name).execute()
-    
-    if not res.data:
-        st.sidebar.info(f"Nickname '{name}' tersedia.")
-        if st.sidebar.button("Daftarkan Akun & Kunci Data"):
-            supabase.table("user_access").insert({"username": name, "password": password}).execute()
-            st.sidebar.success("Akun Berhasil Dibuat!")
-            st.rerun()
-        return False
-    else:
-        if res.data[0]['password'] == password:
-            return True
-        else:
-            st.sidebar.error("Password Salah! Data terkunci.")
+    try:
+        res = supabase.table("user_access").select("*").eq("username", name).execute()
+        
+        if not res.data:
+            st.sidebar.info(f"Nickname '{name}' baru. Daftarkan?")
+            if st.sidebar.button("Daftarkan Akun & Kunci Data"):
+                supabase.table("user_access").insert({"username": name, "password": password}).execute()
+                st.sidebar.success("Akun Dibuat! Silakan klik login.")
+                st.rerun()
             return False
+        else:
+            if res.data[0]['password'] == password:
+                return True
+            else:
+                st.sidebar.error("Password Salah!")
+                return False
+    except Exception as e:
+        st.sidebar.error("⚠️ Sistem Login Belum Siap")
+        st.sidebar.info("Gunakan SQL Editor di Supabase untuk membuat tabel 'user_access'.")
+        return False
 
 # UI Login di Sidebar
 st.sidebar.title("🔐 Secure Access")
 u_name = st.sidebar.text_input("Nickname:", value="Guest").strip()
-u_pass = st.sidebar.text_input("Password:", type="password", help="Gunakan password unik untuk mengunci datamu.")
+u_pass = st.sidebar.text_input("Password:", type="password")
 
-# Verifikasi & Reset Sesi jika User Berganti
+# Reset Sesi jika User Berganti
 if st.session_state.current_user != u_name:
     st.session_state.audit_stage = 'input'
     st.session_state.chat_history = []
@@ -238,7 +243,6 @@ is_authenticated = manage_access(u_name, u_pass)
 
 if is_authenticated:
     user_nickname = u_name
-    st.sidebar.success(f"Login: {user_nickname}")
     page = st.sidebar.radio("Navigasi:", ["Audit & Konsultasi", "Dashboard"])
 
     # --- SIDEBAR CHECKLIST ---
@@ -265,7 +269,7 @@ if is_authenticated:
     else:
         st.sidebar.success("Tidak ada tugas pending. 🚀")
 
-    # --- MAIN PAGE LOGIC ---
+    # --- LOGIKA HALAMAN UTAMA ---
     if page == "Audit & Konsultasi":
         st.title(f"Lead Auditor AI: {user_nickname}")
         st.markdown("---")
