@@ -50,7 +50,8 @@ def init_state():
         'chat_history': [],
         'initial_tasks': "",
         'initial_evidence': "",
-        'data_saved': False
+        'data_saved': False,
+        'current_user': None
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -146,25 +147,17 @@ def extract_and_save_tasks(audit_result, nickname):
     if not match: return
     
     content = match.group(1)
-    
-    # REGEX POSITIF: Mencari baris yang punya Judul Tebal DAN Deskripsi (ada titik dua)
-    # Format yang divalidasi: **Nama Tugas**: Penjelasan
     valid_tasks = re.findall(r"\*\*(.+?)\*\*[:\-]\s*(.+)", content)
     
     saved_count = 0
     for title, desc in valid_tasks:
         if saved_count >= 6: break
-        
-        # Pembersihan residu teks
         clean_title = title.strip()
-        # Hapus sisa teks deadline atau residu kurung dari deskripsi
         clean_desc = re.sub(r"\(?deadline.*", "", desc, flags=re.IGNORECASE).strip()
         clean_desc = clean_desc.rstrip("(").rstrip("[").strip()
 
-        # Validasi Struktural: Pastikan bukan label kategori dan memiliki bobot informasi
         if len(clean_title) > 5 and len(clean_desc) > 10:
             full_data = f"{clean_title} | {clean_desc}"
-            
             supabase.table("pending_tasks").insert({
                 "user_id": nickname,
                 "task_name": full_data,
@@ -203,142 +196,173 @@ architect = Agent(
 )
 
 # ==========================================
-# 4. TAMPILAN WEB
+# 4. TAMPILAN WEB & OTENTIKASI SISTEM
 # ==========================================
-st.set_page_config(page_title="Strategic Auditor V9.2", layout="wide")
-user_nickname = st.sidebar.text_input("Identitas:", value="Guest").strip()
-page = st.sidebar.radio("Navigasi:", ["Audit & Konsultasi", "Dashboard"])
+st.set_page_config(page_title="Strategic Auditor V9.3", layout="wide")
 
-# Sidebar Checklist
-st.sidebar.markdown("---")
-st.sidebar.markdown(f"### 📋 Checklist: {user_nickname}")
-
-if st.sidebar.button("🗑️ Hapus Semua Tugas Mangkrak"):
-    supabase.table("pending_tasks").delete().eq("user_id", user_nickname).eq("status", "Pending").execute()
-    st.sidebar.success("Checklist dibersihkan!")
-    st.rerun()
-
-res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").execute()
-pending = res_tasks.data
-
-if pending:
-    for task in pending:
-        if "|" in task['task_name']:
-            title, desc = task['task_name'].split("|", 1)
+def manage_access(name, password):
+    if name == "Guest": return True
+    if not password: 
+        st.sidebar.warning("Masukkan Password untuk akses data.")
+        return False
+        
+    res = supabase.table("user_access").select("*").eq("username", name).execute()
+    
+    if not res.data:
+        st.sidebar.info(f"Nickname '{name}' tersedia.")
+        if st.sidebar.button("Daftarkan Akun & Kunci Data"):
+            supabase.table("user_access").insert({"username": name, "password": password}).execute()
+            st.sidebar.success("Akun Berhasil Dibuat!")
+            st.rerun()
+        return False
+    else:
+        if res.data[0]['password'] == password:
+            return True
         else:
-            title, desc = task['task_name'], "Eksekusi segera."
-            
-        st.sidebar.markdown(f"### {title}") 
-        st.sidebar.write(desc) 
-            
-        if st.sidebar.button(f"Selesaikan Tugas", key=f"btn_{task['id']}", use_container_width=True):
-            supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", task['id']).execute()
-            st.rerun()
-        st.sidebar.markdown("---")
-else:
-    st.sidebar.success("Tidak ada tugas pending. 🚀")
+            st.sidebar.error("Password Salah! Data terkunci.")
+            return False
 
-if page == "Audit & Konsultasi":
-    st.title(f"Lead Auditor AI: {user_nickname}")
-    st.markdown("---")
+# UI Login di Sidebar
+st.sidebar.title("🔐 Secure Access")
+u_name = st.sidebar.text_input("Nickname:", value="Guest").strip()
+u_pass = st.sidebar.text_input("Password:", type="password", help="Gunakan password unik untuk mengunci datamu.")
 
-    if st.session_state.audit_stage == 'input':
-        st.warning("""
-        ### **🛠️ Panduan Operasional Konsultasi**
-        1. **Input Tantangan**: Jelaskan kendala teknis atau rencana strategismu secara detail.
-        2. **Lampirkan Bukti**: Gunakan fitur upload untuk menyertakan screenshot data.
-        3. **Interaksi Ahli**: Jawab permintaan data dari AI Consultant.
-        4. **Eksekusi**: Cek sidebar kiri untuk daftar tugas nyata.
-        """)
-        u_in = st.text_area("Apa tantangan teknis atau rencana yang ingin kamu audit?", height=120)
-        u_files = st.file_uploader("Upload Bukti Visual/Data (Opsional)", accept_multiple_files=True)
-        
-        if st.button("Mulai Analisis"):
-            if len(u_in) > 15:
-                with st.spinner("Menganalisa data awal..."):
-                    st.session_state.initial_evidence = process_images(u_files) if u_files else ""
-                    st.session_state.initial_tasks = u_in
-                    st.session_state.audit_stage = 'interrogation'
-                    st.session_state.q_index = 1
-                    st.rerun()
+# Verifikasi & Reset Sesi jika User Berganti
+if st.session_state.current_user != u_name:
+    st.session_state.audit_stage = 'input'
+    st.session_state.chat_history = []
+    st.session_state.data_saved = False
+    st.session_state.current_user = u_name
 
-    elif st.session_state.audit_stage == 'interrogation':
-        st.subheader(f"🔍 Analisis Auditor ({st.session_state.q_index}/3)")
-        with st.spinner("Auditor sedang menyusun interogasi..."):
-            hist_str = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
-            task_q = Task(
-                description=f"HARI INI: {datetime.now().strftime('%Y-%m-%d')}. Masalah: {st.session_state.initial_tasks}. History: {hist_str}.",
-                agent=consultant,
-                expected_output="Satu permintaan data teknis spesifik disertai Logika Teknis."
-            )
-            current_q = str(Crew(agents=[consultant], tasks=[task_q]).kickoff().raw)
-        
-        st.info(current_q)
-        u_ans = st.text_area("Input Jawaban:", key=f"ans_{st.session_state.q_index}")
-        u_img = st.file_uploader("Lampirkan Bukti", accept_multiple_files=True, key=f"img_{st.session_state.q_index}")
-        
-        if st.button("Kirim Data"):
-            img_data = f" [Foto: {process_images(u_img)}]" if u_img else ""
-            st.session_state.chat_history.append({"q": current_q, "a": u_ans + img_data})
-            if st.session_state.q_index < 3:
-                st.session_state.q_index += 1
-            else:
-                st.session_state.audit_stage = 'report'
-            st.rerun()
+is_authenticated = manage_access(u_name, u_pass)
 
-    elif st.session_state.audit_stage == 'report':
-        with st.spinner("Membangun Blueprint Solusi..."):
-            today_str = datetime.now().strftime('%Y-%m-%d')
-            past_context = get_user_context(user_nickname)
-            full_hist = f"Input: {st.session_state.initial_tasks}\n" + "\n".join([f"Q{i+1}: {h['q']}\nA: {h['a']}" for i, h in enumerate(st.session_state.chat_history)])
+if is_authenticated:
+    user_nickname = u_name
+    st.sidebar.success(f"Login: {user_nickname}")
+    page = st.sidebar.radio("Navigasi:", ["Audit & Konsultasi", "Dashboard"])
+
+    # --- SIDEBAR CHECKLIST ---
+    st.sidebar.markdown("---")
+    st.sidebar.markdown(f"### 📋 Checklist: {user_nickname}")
+
+    if st.sidebar.button("🗑️ Hapus Semua Tugas Mangkrak"):
+        supabase.table("pending_tasks").delete().eq("user_id", user_nickname).eq("status", "Pending").execute()
+        st.sidebar.success("Checklist dibersihkan!")
+        st.rerun()
+
+    res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").execute()
+    pending = res_tasks.data
+
+    if pending:
+        for task in pending:
+            title, desc = task['task_name'].split("|") if "|" in task['task_name'] else (task['task_name'], "Eksekusi.")
+            st.sidebar.markdown(f"### {title}") 
+            st.sidebar.write(desc) 
+            if st.sidebar.button(f"Selesaikan", key=f"btn_{task['id']}", use_container_width=True):
+                supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", task['id']).execute()
+                st.rerun()
+            st.sidebar.markdown("---")
+    else:
+        st.sidebar.success("Tidak ada tugas pending. 🚀")
+
+    # --- MAIN PAGE LOGIC ---
+    if page == "Audit & Konsultasi":
+        st.title(f"Lead Auditor AI: {user_nickname}")
+        st.markdown("---")
+
+        if st.session_state.audit_stage == 'input':
+            st.warning("""
+            ### **🛠️ Panduan Operasional Konsultasi**
+            1. **Input Tantangan**: Jelaskan kendala teknis atau rencana strategismu.
+            2. **Lampirkan Bukti**: Gunakan fitur upload untuk screenshot data.
+            3. **Interaksi**: Jawab permintaan data teknis dari AI Auditor.
+            """)
+            u_in = st.text_area("Apa tantangan teknis atau rencana yang ingin kamu audit?", height=120)
+            u_files = st.file_uploader("Upload Bukti Visual/Data (Opsional)", accept_multiple_files=True)
             
-            task_fin = Task(
-                description=f"""
-                KONTEKS WAKTU: {today_str}. 
-                FOKUS: Identifikasi bottleneck utama berdasarkan interaksi.
-                
-                HISTORI: {past_context}
-                INTERAKSI: {full_hist}
-                
-                Wajib memberikan SKOR_FINAL: [0.0 - 10.0].
-                Format tugas di bawah header '### ACTION_ITEMS' WAJIB menggunakan format **Judul**: Deskripsi.
-                Pisahkan menjadi:
-                1. HABIT_SYSTEMS (Tanpa deadline).
-                2. PROJECT_TASKS (Wajib deadline 2026).
-                """,
-                agent=architect,
-                expected_output="Laporan blueprint solusi dengan format tugas yang divalidasi sistem."
-            )
-            res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
-            st.markdown(res)
+            if st.button("Mulai Analisis"):
+                if len(u_in) > 15:
+                    with st.spinner("Menganalisa data awal..."):
+                        st.session_state.initial_evidence = process_images(u_files) if u_files else ""
+                        st.session_state.initial_tasks = u_in
+                        st.session_state.audit_stage = 'interrogation'
+                        st.session_state.q_index = 1
+                        st.rerun()
+
+        elif st.session_state.audit_stage == 'interrogation':
+            st.subheader(f"🔍 Analisis Auditor ({st.session_state.q_index}/3)")
+            with st.spinner("Auditor sedang menyusun interogasi..."):
+                hist_str = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
+                task_q = Task(
+                    description=f"HARI INI: {datetime.now().strftime('%Y-%m-%d')}. Masalah: {st.session_state.initial_tasks}. History: {hist_str}.",
+                    agent=consultant,
+                    expected_output="Satu permintaan data teknis spesifik disertai Logika Teknis."
+                )
+                current_q = str(Crew(agents=[consultant], tasks=[task_q]).kickoff().raw)
             
-            save_audit_to_db(st.session_state.initial_tasks, res, user_nickname)
-            extract_and_save_tasks(res, user_nickname)
+            st.info(current_q)
+            u_ans = st.text_area("Input Jawaban:", key=f"ans_{st.session_state.q_index}")
+            u_img = st.file_uploader("Lampirkan Bukti", accept_multiple_files=True, key=f"img_{st.session_state.q_index}")
             
-            st.markdown("---")
-            try:
-                p_tasks = supabase.table("pending_tasks").select("task_name").eq("user_id", user_nickname).eq("status", "Pending").execute().data
-                score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", res, re.IGNORECASE)
-                final_score = score_match.group(1) if score_match else "0.0"
-                
-                pdf_bytes = generate_pdf(user_nickname, res, final_score, p_tasks)
-                st.download_button(label="📥 Download Blueprint & Checklist (PDF)", data=pdf_bytes, file_name=f"Audit_{user_nickname}.pdf", mime="application/pdf")
-            except Exception as e:
-                st.error(f"Gagal menyiapkan PDF: {e}")
-            
-            if st.button("Selesai & Reset"):
-                st.session_state.audit_stage = 'input'
-                st.session_state.chat_history = []
-                st.session_state.data_saved = False
+            if st.button("Kirim Data"):
+                img_data = f" [Foto: {process_images(u_img)}]" if u_img else ""
+                st.session_state.chat_history.append({"q": current_q, "a": u_ans + img_data})
+                if st.session_state.q_index < 3:
+                    st.session_state.q_index += 1
+                else:
+                    st.session_state.audit_stage = 'report'
                 st.rerun()
 
-elif page == "Dashboard":
-    st.title(f"📊 Intelligence Tracking: {user_nickname}")
-    res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).order("created_at", desc=False).execute()
-    if res_log.data:
-        df = pd.DataFrame(res_log.data)
-        df['created_at'] = pd.to_datetime(df['created_at'])
-        st.plotly_chart(px.line(df, x='created_at', y='score', markers=True, range_y=[0, 10]), use_container_width=True)
-        st.dataframe(df.sort_values(by='created_at', ascending=False))
-    else:
-        st.info("Belum ada data audit untuk identitas ini.")
+        elif st.session_state.audit_stage == 'report':
+            with st.spinner("Membangun Blueprint Solusi..."):
+                today_str = datetime.now().strftime('%Y-%m-%d')
+                past_context = get_user_context(user_nickname)
+                full_hist = f"Input: {st.session_state.initial_tasks}\n" + "\n".join([f"Q{i+1}: {h['q']}\nA: {h['a']}" for i, h in enumerate(st.session_state.chat_history)])
+                
+                task_fin = Task(
+                    description=f"""
+                    KONTEKS WAKTU: {today_str}. 
+                    HISTORI: {past_context}
+                    INTERAKSI: {full_hist}
+                    
+                    Wajib memberikan SKOR_FINAL: [0.0 - 10.0].
+                    Format tugas di bawah header '### ACTION_ITEMS' WAJIB menggunakan format **Judul**: Deskripsi.
+                    1. HABIT_SYSTEMS (Tanpa deadline).
+                    2. PROJECT_TASKS (Wajib deadline 2026).
+                    """,
+                    agent=architect,
+                    expected_output="Laporan blueprint solusi dengan format tugas yang divalidasi sistem."
+                )
+                res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
+                st.markdown(res)
+                
+                save_audit_to_db(st.session_state.initial_tasks, res, user_nickname)
+                extract_and_save_tasks(res, user_nickname)
+                
+                st.markdown("---")
+                try:
+                    p_tasks = supabase.table("pending_tasks").select("task_name").eq("user_id", user_nickname).eq("status", "Pending").execute().data
+                    score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", res, re.IGNORECASE)
+                    final_score = score_match.group(1) if score_match else "0.0"
+                    
+                    pdf_bytes = generate_pdf(user_nickname, res, final_score, p_tasks)
+                    st.download_button(label="📥 Download PDF Report", data=pdf_bytes, file_name=f"Audit_{user_nickname}.pdf", mime="application/pdf")
+                except Exception as e:
+                    st.error(f"Gagal menyiapkan PDF: {e}")
+                
+                if st.button("Selesai & Reset"):
+                    st.session_state.audit_stage = 'input'
+                    st.session_state.chat_history = []
+                    st.session_state.data_saved = False
+                    st.rerun()
+
+    elif page == "Dashboard":
+        st.title(f"📊 Tracking: {user_nickname}")
+        res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).order("created_at", desc=False).execute()
+        if res_log.data:
+            df = pd.DataFrame(res_log.data)
+            df['created_at'] = pd.to_datetime(df['created_at'])
+            st.plotly_chart(px.line(df, x='created_at', y='score', markers=True, range_y=[0, 10]), use_container_width=True)
+            st.dataframe(df.sort_values(by='created_at', ascending=False))
+        else:
+            st.info("Belum ada data audit untuk identitas ini.")
