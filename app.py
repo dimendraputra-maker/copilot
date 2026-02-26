@@ -144,17 +144,13 @@ def save_audit_to_db(user_input, audit_result, nickname):
 def extract_and_save_tasks(audit_result, nickname):
     match = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", audit_result, re.DOTALL | re.IGNORECASE)
     if not match: return
-    
     content = match.group(1)
     valid_tasks = re.findall(r"\*\*(.+?)\*\*[:\-]\s*(.+)", content)
-    
     saved_count = 0
     for title, desc in valid_tasks:
         if saved_count >= 6: break
         clean_title = title.strip()
         clean_desc = re.sub(r"\(?deadline.*", "", desc, flags=re.IGNORECASE).strip()
-        clean_desc = clean_desc.rstrip("(").rstrip("[").strip()
-
         if len(clean_title) > 5 and len(clean_desc) > 10:
             full_data = f"{clean_title} | {clean_desc}"
             supabase.table("pending_tasks").insert({
@@ -165,35 +161,39 @@ def extract_and_save_tasks(audit_result, nickname):
             saved_count += 1
 
 # ==========================================
-# 3. AGENT SETUP (V9.5 - MASTER PROMPTER)
+# 3. AGENT SETUP (V9.6 - STRATEGIC AUDITOR)
 # ==========================================
 consultant = Agent(
     role='Lead Strategic Auditor',
-    goal='Mendiagnosa akar masalah melalui klarifikasi tujuan dan validasi data objektif tanpa asumsi buta.',
-    backstory="""Kamu adalah auditor tingkat tinggi yang dingin, objektif, dan sangat benci asumsi buta. 
+    goal='Mendiagnosa akar masalah melalui pola data awal dan memastikan keberlanjutan konteks.',
+    backstory="""Kamu adalah auditor tingkat tinggi yang dingin, objektif, dan benci asumsi buta. 
     Kamu dilarang memberikan apresiasi atau basa-basi. Gunakan 'saya' dan 'kamu'.
 
     ALUR LOGIKA WAJIB (STRICT PROTOCOL):
-    1. EVALUASI INPUT AWAL: Analisis input pertama user. Jika user sudah menjelaskan TUJUAN OBJEKTIF dan KONTEKS operasional dengan sangat jelas, JANGAN tanyakan lagi hal tersebut di Q1. Langsung melompat ke pendalaman data teknis.
+    1. EVALUASI INPUT: Jika user menjelaskan TUJUAN dan KONTEKS di awal, JANGAN tanyakan lagi di Q1. Langsung melompat ke pendalaman.
     
-    2. FASE DISCOVERY (Jika input awal ambigu): Pertanyaan pertama kamu HARUS mengklarifikasi: "Apa tujuan objektif yang ingin kamu capai?" dan "Berikan gambaran singkat konteks operasionalmu."
+    2. MICRO-AUDIT (DATA TERBATAS): Jika data user sedikit (misal: hanya 3 transaksi), JANGAN menolak audit. Lakukan analisa 'gejala' berdasarkan pola yang ada (inkonsistensi, keterlambatan, atau anomali lot). Berikan diagnosa awal yang tajam.
     
-    3. DETERMINASI TIPE OUTPUT:
-       - TIPE SOLUSI: Fokus pada diagnosa hambatan proses, strategi perbaikan, dan efisiensi. Mintalah data angka/variansi waktu.
-       - TIPE ANALISIS DATA/VISUAL: Fokus pada validasi artefak (file/foto). HANYA minta foto jika diperlukan untuk akurasi diagnosa maksimal.
+    3. CONTINUITY PROTOCOL (WAJIB): Pada pertanyaan terakhir (Q4), kamu HARUS fokus menyimpulkan temuan sementara. Ingatkan user secara tegas untuk:
+       - Mengunduh PDF laporan audit hari ini.
+       - Kembali dalam waktu yang ditentukan (misal 7-14 hari) dengan data yang lebih spesifik.
+       - Memberikan file PDF hari ini kembali kepada saya di sesi berikutnya sebagai 'Memori Konteks'.
     
-    4. PENERJEMAH TEKNIS: Gunakan logika manajemen tingkat tinggi (Variansi, Bottleneck), namun sampaikan dalam kalimat yang dipahami orang awam. 
-    
-    5. SENSITIVITAS SUBJEK: Deteksi apakah subjeknya individu atau tim berdasarkan kata ganti ('saya' vs 'kami/tim'). Jangan tanyakan data tim kepada individu.""",
+    4. PENERJEMAH TEKNIS: Gunakan logika manajemen (Variansi, Bottleneck), namun jelaskan dengan bahasa awam.""",
     llm=llm_gemini,
     allow_delegation=False
 )
 
 architect = Agent(
     role='High-Leverage Solutions Architect',
-    goal='Memberikan blueprint solusi berdasarkan diagnosa auditor.',
-    backstory="""Kamu arsitek yang benci inefisiensi. Wajib memberikan output ### ACTION_ITEMS dengan format **Nama Tugas**: Deskripsi teknis. 
-    Fokus pada 20% tindakan untuk 80% hasil.""",
+    goal='Memberikan blueprint solusi dan instruksi keberlanjutan konteks.',
+    backstory="""Kamu arsitek yang benci inefisiensi. Wajib memberikan output kaku.
+    
+    STRUKTUR OUTPUT WAJIB:
+    1. SKOR_FINAL: [0.0 - 10.0]
+    2. ### DIAGNOSA_AWAL: Analisa pola dari interaksi saat ini (meskipun data terbatas).
+    3. ### ACTION_ITEMS: Tugas 20/80 (Format **Nama Tugas**: Deskripsi teknis).
+    4. ### CONTINUITY_PROTOCOL: Instruksi detail kapan user harus kembali, data apa yang harus disiapkan, dan perintah untuk mengunggah PDF hari ini di sesi mendatang.""",
     llm=llm_gemini,
     allow_delegation=False
 )
@@ -201,7 +201,7 @@ architect = Agent(
 # ==========================================
 # 4. TAMPILAN WEB & OTENTIKASI SISTEM
 # ==========================================
-st.set_page_config(page_title="Strategic Auditor V9.5", layout="wide")
+st.set_page_config(page_title="Strategic Auditor V9.6", layout="wide")
 
 def manage_access(name, password):
     if not name or name.strip() == "": return False
@@ -209,48 +209,42 @@ def manage_access(name, password):
     try:
         res = supabase.table("user_access").select("*").eq("username", name).execute()
         if not res.data:
-            st.info(f"Nickname '{name}' belum terdaftar.")
-            if st.button("Daftarkan Akun Baru"):
+            st.info(f"Nickname '{name}' baru. Daftarkan?")
+            if st.button("Daftarkan Akun"):
                 supabase.table("user_access").insert({"username": name, "password": password}).execute()
-                st.success("Akun Berhasil Dibuat! Silakan klik login kembali.")
+                st.success("Akun Dibuat! Silakan klik login.")
                 st.rerun()
             return False
-        else:
-            return res.data[0]['password'] == password
-    except:
-        st.error("⚠️ Sistem Login Belum Siap")
-        return False
+        return res.data[0]['password'] == password
+    except: return False
 
-# --- LOGIKA GERBANG LOGIN (TENGAH) ---
+# --- GERBANG LOGIN TENGAH ---
 if st.session_state.current_user is None:
-    empty_l, col_mid, empty_r = st.columns([1, 2, 1])
-    with col_mid:
+    l, m, r = st.columns([1, 2, 1])
+    with m:
         st.markdown("<h1 style='text-align: center;'>🔐 Secure Access</h1>", unsafe_allow_html=True)
-        u_name = st.text_input("Nickname:", placeholder="Masukkan Nickname kamu...")
-        u_pass = st.text_input("Password:", type="password", placeholder="Masukkan Password...")
-        
-        if st.button("Login ke Sistem", use_container_width=True):
+        u_name = st.text_input("Nickname:")
+        u_pass = st.text_input("Password:", type="password")
+        if st.button("Login", use_container_width=True):
             if manage_access(u_name, u_pass):
                 st.session_state.current_user = u_name
                 st.rerun()
-            else:
-                st.error("Nickname atau Password salah!")
-    st.stop() 
+            else: st.error("Akses Ditolak.")
+    st.stop()
 
 # --- JIKA SUDAH LOGIN ---
 user_nickname = st.session_state.current_user
-
-# Sidebar: Navigasi & Logout
 st.sidebar.title(f"👤 {user_nickname}")
 page = st.sidebar.radio("Navigasi:", ["Audit & Konsultasi", "Dashboard"])
-if st.sidebar.button("Keluar Sistem"):
+
+if st.sidebar.button("Log Out"):
     st.session_state.current_user = None
     st.rerun()
 
-# Sidebar: Checklist
+# --- SIDEBAR CHECKLIST ---
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"### 📋 Checklist: {user_nickname}")
-if st.sidebar.button("🗑️ Hapus Tugas Mangkrak"):
+st.sidebar.markdown("### 📋 Operational Checklist")
+if st.sidebar.button("🗑️ Bersihkan Checklist"):
     supabase.table("pending_tasks").delete().eq("user_id", user_nickname).eq("status", "Pending").execute()
     st.rerun()
 
@@ -258,9 +252,9 @@ res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickn
 if res_tasks.data:
     for task in res_tasks.data:
         title, desc = task['task_name'].split("|") if "|" in task['task_name'] else (task['task_name'], "Eksekusi.")
-        st.sidebar.markdown(f"### {title}")
-        st.sidebar.write(desc)
-        if st.sidebar.button("Selesaikan", key=f"btn_{task['id']}", use_container_width=True):
+        st.sidebar.markdown(f"**{title}**")
+        st.sidebar.caption(desc)
+        if st.sidebar.button("Selesaikan", key=f"t_{task['id']}", use_container_width=True):
             supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", task['id']).execute()
             st.rerun()
         st.sidebar.markdown("---")
@@ -272,17 +266,17 @@ if page == "Audit & Konsultasi":
 
     if st.session_state.audit_stage == 'input':
         st.warning("""
-        ### **🛠️ Panduan Operasional Konsultasi**
-        1. **Input Tantangan**: Jelaskan kendala teknis atau rencana strategismu secara detail.
-        2. **Lampirkan Bukti**: Gunakan fitur upload untuk screenshot data jika diperlukan.
-        3. **Interaksi**: Jawab 4 tahap interogasi dari AI Auditor untuk hasil maksimal.
+        ### **🛠️ Panduan Operasional**
+        1. **Input**: Jelaskan rencana atau masalah teknismu.
+        2. **Konteks**: Jika ini sesi lanjutan, **unggah file PDF** audit sebelumnya.
+        3. **Output**: Simpan PDF hasil akhir sebagai 'Memori' untuk audit masa depan.
         """)
-        u_in = st.text_area("Apa tantangan teknis atau rencana yang ingin kamu audit?", height=120)
-        u_files = st.file_uploader("Upload Bukti Visual/Data (Opsional)", accept_multiple_files=True)
+        u_in = st.text_area("Apa yang ingin kamu audit hari ini?", height=120)
+        u_files = st.file_uploader("Upload Bukti/PDF Audit Sebelumnya", accept_multiple_files=True)
         
-        if st.button("Mulai Analisis"):
-            if len(u_in) > 15:
-                with st.spinner("Menganalisa data awal..."):
+        if st.button("Mulai Sesi"):
+            if len(u_in) > 10:
+                with st.spinner("Inisialisasi..."):
                     st.session_state.initial_evidence = process_images(u_files) if u_files else ""
                     st.session_state.initial_tasks = u_in
                     st.session_state.audit_stage = 'interrogation'
@@ -290,22 +284,26 @@ if page == "Audit & Konsultasi":
                     st.rerun()
 
     elif st.session_state.audit_stage == 'interrogation':
-        st.subheader(f"🔍 Analisis Auditor ({st.session_state.q_index}/4)")
-        with st.spinner("Auditor sedang menyusun interogasi..."):
+        st.subheader(f"🔍 Interogasi Auditor ({st.session_state.q_index}/4)")
+        
+        # Penentuan expected output untuk memicu Continuity Protocol di pertanyaan terakhir
+        exp_out = "Satu pertanyaan teknis." if st.session_state.q_index < 4 else "Diagnosa pola awal dan instruksi Continuity Protocol (Unduh PDF & jadwal kembali)."
+
+        with st.spinner("Auditor sedang berpikir..."):
             hist_str = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
             task_q = Task(
-                description=f"HARI INI: {datetime.now().strftime('%Y-%m-%d')}. Input User: {st.session_state.initial_tasks}. History: {hist_str}.",
+                description=f"Input: {st.session_state.initial_tasks}. History: {hist_str}. Pertanyaan ke-{st.session_state.q_index} dari 4.",
                 agent=consultant,
-                expected_output="Satu pertanyaan strategis/permintaan data teknis."
+                expected_output=exp_out
             )
             current_q = str(Crew(agents=[consultant], tasks=[task_q]).kickoff().raw)
         
         st.info(current_q)
-        u_ans = st.text_area("Input Jawaban:", key=f"ans_{st.session_state.q_index}")
-        u_img = st.file_uploader("Lampirkan Bukti", accept_multiple_files=True, key=f"img_{st.session_state.q_index}")
+        u_ans = st.text_area("Jawaban kamu:", key=f"ans_{st.session_state.q_index}")
+        u_img = st.file_uploader("Lampirkan Bukti (Jika diminta)", accept_multiple_files=True, key=f"img_{st.session_state.q_index}")
         
-        if st.button("Kirim Data"):
-            img_data = f" [Foto: {process_images(u_img)}]" if u_img else ""
+        if st.button("Kirim"):
+            img_data = f" [Bukti: {process_images(u_img)}]" if u_img else ""
             st.session_state.chat_history.append({"q": current_q, "a": u_ans + img_data})
             if st.session_state.q_index < 4:
                 st.session_state.q_index += 1
@@ -314,13 +312,13 @@ if page == "Audit & Konsultasi":
             st.rerun()
 
     elif st.session_state.audit_stage == 'report':
-        with st.spinner("Membangun Laporan..."):
+        with st.spinner("Menyusun Blueprint Final..."):
             past_context = get_user_context(user_nickname)
-            full_hist = f"Input: {st.session_state.initial_tasks}\n" + "\n".join([f"Q{i+1}: {h['q']}\nA: {h['a']}" for i, h in enumerate(st.session_state.chat_history)])
+            full_hist = "\n".join([f"Q{i+1}: {h['q']}\nA: {h['a']}" for i, h in enumerate(st.session_state.chat_history)])
             task_fin = Task(
-                description=f"HISTORI: {past_context}. INTERAKSI: {full_hist}. Berikan SKOR_FINAL [0-10] dan ### ACTION_ITEMS.",
+                description=f"HISTORI DB: {past_context}. INTERAKSI: {full_hist}. Berikan laporan lengkap dengan format wajib.",
                 agent=architect,
-                expected_output="Laporan blueprint solusi lengkap."
+                expected_output="Laporan dengan SKOR_FINAL, DIAGNOSA_AWAL, ACTION_ITEMS, dan CONTINUITY_PROTOCOL."
             )
             res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
             st.markdown(res)
@@ -328,12 +326,12 @@ if page == "Audit & Konsultasi":
             extract_and_save_tasks(res, user_nickname)
             
             try:
-                p_tasks = supabase.table("pending_tasks").select("task_name").eq("user_id", user_nickname).eq("status", "Pending").execute().data
                 score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", res, re.IGNORECASE)
-                final_score = score_match.group(1) if score_match else "0.0"
-                pdf_bytes = generate_pdf(user_nickname, res, final_score, p_tasks)
-                st.download_button(label="📥 Download PDF", data=pdf_bytes, file_name=f"Audit_{user_nickname}.pdf", mime="application/pdf")
-            except: st.error("Gagal cetak PDF.")
+                f_score = score_match.group(1) if score_match else "0.0"
+                p_tasks = supabase.table("pending_tasks").select("task_name").eq("user_id", user_nickname).eq("status", "Pending").execute().data
+                pdf_bytes = generate_pdf(user_nickname, res, f_score, p_tasks)
+                st.download_button("📥 Unduh Laporan (Simpan untuk Audit Berikutnya)", data=pdf_bytes, file_name=f"Audit_{user_nickname}.pdf")
+            except: st.error("PDF Gagal.")
 
             if st.button("Selesai & Reset"):
                 st.session_state.audit_stage = 'input'
@@ -341,21 +339,13 @@ if page == "Audit & Konsultasi":
                 st.session_state.data_saved = False
                 st.rerun()
 
-# --- HALAMAN DASHBOARD (DIPERBAIKI) ---
 elif page == "Dashboard":
-    st.title(f"📊 Tracking: {user_nickname}")
-    st.markdown("---")
+    st.title("📊 Dashboard Performa")
     res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).order("created_at", desc=False).execute()
-    
     if res_log.data:
         df = pd.DataFrame(res_log.data)
         df['created_at'] = pd.to_datetime(df['created_at'])
-        
-        # Grafik Performa
         st.plotly_chart(px.line(df, x='created_at', y='score', markers=True, range_y=[0, 10]), use_container_width=True)
-        
-        # Dataframe Riwayat
-        st.subheader("Riwayat Detail")
+        st.subheader("Riwayat Audit")
         st.dataframe(df.sort_values(by='created_at', ascending=False), use_container_width=True)
-    else:
-        st.info("Belum ada data audit tercatat.")
+    else: st.info("Belum ada data.")
