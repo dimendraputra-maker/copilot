@@ -21,7 +21,7 @@ from supabase import create_client, Client
 from fpdf import FPDF
 
 # ==========================================
-# 1. API KEY & LLM & DATABASE
+# 1. API KEY & DATABASE
 # ==========================================
 API_KEY = st.secrets["GOOGLE_API_KEY"]
 os.environ["GOOGLE_API_KEY"] = API_KEY.strip()
@@ -33,34 +33,28 @@ supabase: Client = create_client(SB_URL, SB_KEY)
 
 llm_gemini = ChatGoogleGenerativeAI(
     model="gemini-2.0-flash", 
-    temperature=0.2, # Sedikit dinaikkan agar lebih luwes dalam analisa
+    temperature=0.2, 
     max_output_tokens=4000 
 )
 vision_model = genai.GenerativeModel('gemini-2.0-flash')
 
 # ==========================================
-# 2. SISTEM DATA & FUNGSI PENDUKUNG
+# 2. SISTEM DATA & PDF
 # ==========================================
 def init_state():
     defaults = {
-        'audit_stage': 'input',
-        'q_index': 0,
-        'chat_history': [],
-        'initial_tasks': "",
-        'initial_evidence': "",
-        'data_saved': False,
-        'current_user': None
+        'audit_stage': 'input', 'q_index': 0, 'chat_history': [],
+        'initial_tasks': "", 'initial_evidence': "", 'data_saved': False, 'current_user': None
     }
     for key, val in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = val
+        if key not in st.session_state: st.session_state[key] = val
 
 init_state()
 
 def clean_txt(text):
     return text.replace("**", "").replace("###", "").replace("##", "").replace("#", "").replace("*", "-").encode('ascii', 'ignore').decode('ascii')
 
-def generate_pdf(nickname, report_text, score, tasks):
+def generate_pdf(nickname, report_text, score):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 16); pdf.cell(0, 10, txt=f"STRATEGIC AUDIT: {clean_txt(nickname)}", ln=True, align='C')
@@ -69,17 +63,8 @@ def generate_pdf(nickname, report_text, score, tasks):
     pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, txt=clean_txt(report_text))
     return pdf.output(dest='S').encode('latin-1')
 
-def process_images(files):
-    if not files: return ""
-    descriptions = []
-    for f in files:
-        img = Image.open(f)
-        res = vision_model.generate_content(["Sebutkan fakta teknis dan data objektif di gambar ini.", img])
-        descriptions.append(res.text)
-    return " | ".join(descriptions)
-
 # ==========================================
-# 3. AGENT SETUP (REVISI LOGIKA MENDALAM)
+# 3. AGENT SETUP (DEEP-DIVE LOGIC)
 # ==========================================
 consultant = Agent(
     role='Lead Strategic Copilot',
@@ -91,14 +76,18 @@ consultant = Agent(
     1. ANALISA MENDALAM: Sebelum bertanya, berikan minimal 2-3 paragraf analisa mendalam mengenai pola masalah user. Bedah dari sisi operasional, risiko, dan dampak jangka panjang. 
     2. BAHASA LUWES: Gunakan bahasa yang profesional namun mengalir, tidak kaku, dan mudah dipahami. Gunakan 'Saya' dan 'Kamu'.
     3. NO REPETITION: Jangan tanyakan hal yang sudah ada di history.
-    4. UNIVERSAL: Jangan fokus hanya pada trading. Jika user membahas bisnis, gunakan logika manajemen. Jika trading, gunakan logika disiplin operasional.""",
+    4. UNIVERSAL: Deteksi konteks (Bisnis, Manajemen, Prosedur). Berikan wawasan strategis sebelum meminta data baru.""",
     llm=llm_gemini
 )
 
 architect = Agent(
     role='High-Leverage Solutions Architect',
     goal='Memberikan blueprint solusi strategis.',
-    backstory="""Kamu ahli efisiensi. Berikan laporan kaku: SKOR_FINAL, ### DIAGNOSA_AWAL, ### ACTION_ITEMS (Format **Nama Tugas**: Deskripsi teknis).""",
+    backstory="""Kamu ahli efisiensi. Berikan laporan dengan format ketat: 
+    SKOR_FINAL: [0-10]
+    ### DIAGNOSA_AWAL: ...
+    ### ACTION_ITEMS: (Format **Nama Tugas**: Deskripsi teknis)
+    ### CONTINUITY_PROTOCOL: ...""",
     llm=llm_gemini
 )
 
@@ -128,10 +117,7 @@ if st.session_state.current_user is None:
 # --- SIDEBAR: CHECKLIST RAPI ---
 user_nickname = st.session_state.current_user
 st.sidebar.title(f"👤 {user_nickname}")
-
 st.sidebar.markdown("### 📋 Action Items")
-if st.sidebar.button("🗑️ Bersihkan Checklist"):
-    supabase.table("pending_tasks").delete().eq("user_id", user_nickname).eq("status", "Pending").execute(); st.rerun()
 
 res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").order("created_at", desc=True).execute()
 if res_tasks.data:
@@ -145,53 +131,60 @@ if res_tasks.data:
 
 if st.sidebar.button("Keluar"): st.session_state.current_user = None; st.rerun()
 
-# --- HALAMAN UTAMA ---
-page = st.tabs(["🔍 Audit", "📊 Dashboard"])
+# ==========================================
+# 5. HALAMAN UTAMA (AUDIT & DASHBOARD)
+# ==========================================
+page = st.tabs(["🔍 Audit Strategis", "📊 Dashboard Performa"])
 
 with page[0]:
+    # --- BAGIAN INSTRUKSI (NEW) ---
+    st.error("""
+    ### ⚠️ **INSTRUKSI OPERASIONAL COPILOT**
+    1. **Identifikasi Masalah**: Masukkan tantangan operasional atau rencana strategismu secara utuh.
+    2. **Transparansi Data**: Jawab pertanyaan interogasi dengan data jujur. Analisa AI bergantung pada kualitas jawabanmu.
+    3. **Observasi Analisa**: Baca analisa mendalam AI di setiap tahap untuk memahami 'blind spot' strategismu.
+    4. **Blueprint & Check**: Di akhir sesi, AI akan memberikan Skor dan Action Items yang akan otomatis masuk ke Sidebar.
+    """)
+    st.markdown("---")
+
     if st.session_state.audit_stage == 'input':
-        u_in = st.text_area("Apa tantangan strategis/teknis yang ingin diaudit?", height=150)
-        u_files = st.file_uploader("Upload Bukti Visual (Opsional)", accept_multiple_files=True)
-        if st.button("Mulai Audit"):
+        u_in = st.text_area("Apa tantangan strategis/teknis yang ingin kamu bedah hari ini?", height=150)
+        if st.button("Mulai Sesi Audit"):
             if len(u_in) > 10:
-                st.session_state.initial_evidence = process_images(u_files) if u_files else ""
                 st.session_state.initial_tasks = u_in
                 st.session_state.audit_stage, st.session_state.q_index = 'interrogation', 1; st.rerun()
 
     elif st.session_state.audit_stage == 'interrogation':
-        st.subheader(f"Interogasi {st.session_state.q_index}/4")
+        st.subheader(f"Fase Interogasi {st.session_state.q_index}/4")
         hist_str = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
         
         task_q = Task(
             description=f"Masalah: {st.session_state.initial_tasks}. History: {hist_str}. Tahap: {st.session_state.q_index}/4.",
-            agent=consultant, expected_output="Analisa mendalam (minimal 2 paragraf) dan satu pertanyaan baru."
+            agent=consultant, expected_output="Analisa mendalam (2-3 paragraf) dan satu pertanyaan baru."
         )
-        with st.spinner("Auditor sedang membedah..."):
+        with st.spinner("Copilot sedang membedah sistem..."):
             current_q = str(Crew(agents=[consultant], tasks=[task_q]).kickoff().raw)
         
         st.info(current_q)
-        u_ans = st.text_area("Jawaban kamu:", key=f"ans_{st.session_state.q_index}")
-        u_img = st.file_uploader("Lampirkan Foto", accept_multiple_files=True, key=f"img_{st.session_state.q_index}")
-        
-        if st.button("Kirim Data"):
-            img_info = f" [Visual: {process_images(u_img)}]" if u_img else ""
-            st.session_state.chat_history.append({"q": current_q, "a": u_ans + img_info})
+        u_ans = st.text_area("Input Jawaban:", key=f"ans_{st.session_state.q_index}")
+        if st.button("Kirim Analisa"):
+            st.session_state.chat_history.append({"q": current_q, "a": u_ans})
             if st.session_state.q_index < 4: st.session_state.q_index += 1
             else: st.session_state.audit_stage = 'report'
             st.rerun()
 
     elif st.session_state.audit_stage == 'report':
-        with st.spinner("Menyusun Blueprint..."):
+        with st.spinner("Menyusun Strategi Final..."):
             full_hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
             task_fin = Task(description=f"History: {full_hist}.", agent=architect, expected_output="Laporan blueprint solusi.")
             res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw); st.markdown(res)
             
             score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", res, re.IGNORECASE)
-            f_score = score_match.group(1) if score_match else "0.0"
+            f_score = float(score_match.group(1)) if score_match else 0.0
             
             if not st.session_state.data_saved:
-                supabase.table("audit_log").insert({"user_id": user_nickname, "score": float(f_score), "audit_report": res, "input_preview": st.session_state.initial_tasks[:100]}).execute()
-                # Extraction
+                supabase.table("audit_log").insert({"user_id": user_nickname, "score": f_score, "audit_report": res, "input_preview": st.session_state.initial_tasks[:100]}).execute()
+                # Task Extraction
                 action_section = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", res, re.DOTALL | re.IGNORECASE)
                 if action_section:
                     tasks = re.findall(r"\*\*(.+?)\*\*[:\-]\s*(.+)", action_section.group(1))
@@ -200,12 +193,12 @@ with page[0]:
                 st.session_state.data_saved = True; st.rerun()
 
             pdf_bytes = generate_pdf(user_nickname, res, f_score)
-            st.download_button("📥 Download PDF", data=pdf_bytes, file_name=f"Audit_{user_nickname}.pdf")
-            if st.button("Reset"):
+            st.download_button("📥 Download PDF Laporan", data=pdf_bytes, file_name=f"Audit_{user_nickname}.pdf")
+            if st.button("Selesai & Reset Sesi"):
                 st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved = 'input', [], False; st.rerun()
 
 with page[1]:
-    st.title("📈 Performance Dashboard")
+    st.title("📈 Dashboard Strategis")
     res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).order("created_at", desc=False).execute()
     if res_log.data:
         df = pd.DataFrame(res_log.data)
