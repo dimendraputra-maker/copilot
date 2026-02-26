@@ -264,8 +264,8 @@ if is_authenticated:
         st.sidebar.success("Checklist dibersihkan!")
         st.rerun()
 
-    res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").execute()
-    pending = res_tasks.data
+    # Menambahkan .order("created_at", desc=True) agar tugas terbaru muncul paling atas
+res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").order("created_at", desc=True).execute()
 
     if pending:
         for task in pending:
