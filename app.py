@@ -36,7 +36,7 @@ llm_gemini = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.1)
 vision_model = genai.GenerativeModel('gemini-2.0-flash')
 
 # ==========================================
-# 2. CORE FUNCTIONS
+# 2. CORE FUNCTIONS (PDF, DATA, CSV)
 # ==========================================
 def init_state():
     defaults = {
@@ -67,35 +67,34 @@ def generate_pdf(nickname, report_text, score, tasks):
     pdf.set_font("Arial", size=10); pdf.cell(0, 10, txt=f"Date: {datetime.now().strftime('%d %b %Y')}", ln=True, align='C'); pdf.ln(10)
     pdf.set_fill_color(230, 230, 230); pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, txt=f"SCORE: {score}/10", ln=True, fill=True); pdf.ln(5)
     pdf.set_font("Arial", size=10); pdf.multi_cell(0, 5, txt=clean_txt(report_text))
+    if tasks:
+        pdf.ln(10); pdf.set_font("Arial", 'B', 12); pdf.cell(0, 10, txt="ACTION ITEMS:", ln=True)
+        for i, t in enumerate(tasks, 1):
+            pdf.multi_cell(0, 5, txt=f"{i}. [ ] {clean_txt(t['task_name'].split('|')[0])}")
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
-# 3. AGENT SETUP (STRICT PROTOCOL)
+# 3. AGENT SETUP
 # ==========================================
 consultant = Agent(
     role='Lead Strategic Auditor',
     goal='Mendiagnosa hambatan operasional melalui interogasi progresif.',
-    backstory="""Kamu auditor senior yang dingin. Wajib gunakan 'saya' dan 'kamu'. Dilarang kata 'Anda'.
+    backstory="""Kamu auditor dingin. Wajib gunakan 'saya' dan 'kamu'. Dilarang keras kata 'Anda'.
     Berikan analisa teknis mendalam (3-4 kalimat) sebelum bertanya. Jangan mengulang pertanyaan history.""",
     llm=llm_gemini, allow_delegation=False
 )
 
 architect = Agent(
     role='Solutions Architect',
-    goal='Menyusun blueprint solusi kaku.',
-    backstory="""Kamu arsitek sistem. Berikan laporan dengan format:
-    SKOR_FINAL: [0-10]
-    ### DIAGNOSA_AWAL: ...
-    ### ACTION_ITEMS:
-    Wajib tulis setiap tugas dengan format: TASK_START | Nama Tugas | Deskripsi Maksud Tugas | TASK_END
-    ### CONTINUITY_PROTOCOL: ...""",
+    goal='Menyusun blueprint solusi kaku dan skor performa.',
+    backstory="""Kamu arsitek sistem. Wajib format: SKOR_FINAL: [0-10], ### DIAGNOSA_AWAL, ### ACTION_ITEMS, ### CONTINUITY_PROTOCOL.""",
     llm=llm_gemini, allow_delegation=False
 )
 
 # ==========================================
-# 4. UI FLOW: LOGIN
+# 4. UI FLOW: LOGIN GATE
 # ==========================================
-st.set_page_config(page_title="Strategic Auditor V18", layout="wide")
+st.set_page_config(page_title="Strategic Auditor V15", layout="wide")
 
 if st.session_state.current_user is None:
     _, col_mid, _ = st.columns([1, 2, 1])
@@ -112,65 +111,58 @@ if st.session_state.current_user is None:
                     else: st.error("Password salah.")
                 else:
                     supabase.table("user_access").insert({"username": u_name, "password": u_pass}).execute()
-                    st.success("Terdaftar!"); st.rerun()
+                    st.success("Akun baru didaftarkan. Klik masuk lagi."); st.rerun()
     st.stop()
 
-# --- SIDEBAR: CLEAN CHECKLIST ONLY ---
+# --- SIDEBAR: CHECKLIST & STATS ---
 user_nickname = st.session_state.current_user
 st.sidebar.title(f"👤 {user_nickname}")
-st.sidebar.markdown("---")
-st.sidebar.subheader("📋 Daftar Tugas (Action Only)")
 
-if st.sidebar.button("🗑️ Hapus Semua Tugas", use_container_width=True):
-    supabase.table("pending_tasks").delete().eq("user_id", user_nickname).eq("status", "Pending").execute(); st.rerun()
+st.sidebar.markdown("### 📋 Pending Checklist")
+res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").execute()
+for t in res_tasks.data:
+    if st.sidebar.button(f"✅ {t['task_name'].split('|')[0]}", key=f"t_{t['id']}", use_container_width=True):
+        supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", t['id']).execute(); st.rerun()
 
-# Menampilkan Daftar Tugas Secara Bersih
-res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").order("created_at", desc=True).execute()
-if res_tasks.data:
-    for t in res_tasks.data:
-        parts = t['task_name'].split("|")
-        if len(parts) >= 2:
-            title = parts[0].strip()
-            desc = parts[1].strip()
-            with st.sidebar.expander(f"📌 {title}"):
-                st.write(f"**Maksud:** {desc}")
-                if st.button("Selesaikan ✅", key=f"t_{t['id']}", use_container_width=True):
-                    supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", t['id']).execute(); st.rerun()
-else:
-    st.sidebar.info("Tidak ada tugas aktif.")
-
-st.sidebar.markdown("---")
-if st.sidebar.button("Keluar"): st.session_state.current_user = None; st.rerun()
+if st.sidebar.button("Log Out"): st.session_state.current_user = None; st.rerun()
 
 # ==========================================
 # 5. MAIN PAGE: TABS
 # ==========================================
-tabs = st.tabs(["🔍 Sesi Audit", "📊 Data & Excel"])
+tabs = st.tabs(["🔍 Audit Sesi", "📊 Dashboard & Excel Data"])
 
 with tabs[0]:
+    st.info("""
+    **INSTRUKSI OPERASIONAL:**
+    1. **Tantangan**: Masukkan masalah teknismu di kolom input.
+    2. **Interogasi**: Jawab 4 tahap interogasi. Gunakan **tombol foto** untuk bukti visual.
+    3. **Final Report**: Dapatkan skor dan blueprint solusi.
+    4. **Download PDF**: Simpan laporan sebagai memori untuk sesi berikutnya.
+    """)
+
     if st.session_state.audit_stage == 'input':
-        u_in = st.text_area("Apa tantangan strategis/teknismu hari ini?", height=150)
-        u_f = st.file_uploader("Upload Foto/PDF Sebelumnya", accept_multiple_files=True)
+        u_in = st.text_area("Apa tantangan strategis/teknis yang ingin kamu audit hari ini?", height=150)
+        u_f = st.file_uploader("Lampirkan PDF Memori / Bukti Visual", accept_multiple_files=True)
         if st.button("Mulai Audit"):
             if len(u_in) > 5:
                 img_data = process_images(u_f)
-                st.session_state.initial_tasks = u_in + f" [Visual: {img_data}]"
+                st.session_state.initial_tasks = u_in + f" [Evidence: {img_data}]"
                 st.session_state.audit_stage, st.session_state.q_index = 'interrogation', 1; st.rerun()
 
     elif st.session_state.audit_stage == 'interrogation':
-        st.subheader(f"🔍 Interogasi {st.session_state.q_index}/4")
+        st.subheader(f"🔍 Interogasi Auditor ({st.session_state.q_index}/4)")
         hist_text = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
         
         task_q = Task(
-            description=f"History: {hist_text}. Masalah: {st.session_state.initial_tasks}. Tahap {st.session_state.q_index}/4. Analisa teknis tajam dan tanya hal baru. Gunakan 'kamu'.",
-            agent=consultant, expected_output="Analisa dan pertanyaan baru."
+            description=f"History: {hist_text}. Masalah: {st.session_state.initial_tasks}. Tahap {st.session_state.q_index}/4. Analisa mendalam dan tanya hal baru. Gunakan 'kamu'.",
+            agent=consultant, expected_output="Analisa teknis dan satu pertanyaan baru."
         )
-        with st.spinner("Auditor sedang membedah..."):
+        with st.spinner("Auditor sedang membedah sistem..."):
             q_text = str(Crew(agents=[consultant], tasks=[task_q]).kickoff().raw)
         
         st.info(q_text)
         u_ans = st.text_area("Jawaban kamu:", key=f"ans_{st.session_state.q_index}")
-        u_img = st.file_uploader("📷 Tambahkan Foto Bukti", accept_multiple_files=True, key=f"img_{st.session_state.q_index}")
+        u_img = st.file_uploader("📷 Lampirkan Bukti Visual", accept_multiple_files=True, key=f"img_{st.session_state.q_index}")
         
         if st.button("Kirim Jawaban"):
             visual_info = process_images(u_img)
@@ -180,47 +172,60 @@ with tabs[0]:
             st.rerun()
 
     elif st.session_state.audit_stage == 'report':
-        st.subheader("🏁 Blueprint Solusi Final")
-        with st.spinner("Menyusun laporan..."):
+        st.subheader("🏁 Final Solution Blueprint")
+        with st.spinner("Membangun laporan akhir..."):
             full_hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
-            task_f = Task(description=f"History: {full_hist}.", agent=architect, expected_output="Laporan kaku dengan SKOR_FINAL dan daftar tugas TASK_START | Title | Desc | TASK_END")
+            task_f = Task(description=f"History: {full_hist}.", agent=architect, expected_output="SKOR_FINAL: [X.X], ### DIAGNOSA_AWAL, ### ACTION_ITEMS, ### CONTINUITY_PROTOCOL.")
             report_res = str(Crew(agents=[architect], tasks=[task_f]).kickoff().raw)
         
         st.markdown(report_res)
         
-        # --- EKSTRAKSI TUGAS SURGICAL (V18) ---
         score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", report_res, re.IGNORECASE)
         final_score = float(score_match.group(1)) if score_match else 0.0
         
         if not st.session_state.data_saved:
             supabase.table("audit_log").insert({"user_id": user_nickname, "score": final_score, "audit_report": report_res}).execute()
-            
-            # Mencari semua teks di antara TASK_START dan TASK_END
-            raw_tasks = re.findall(r"TASK_START\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*TASK_END", report_res, re.DOTALL)
-            for title, desc in raw_tasks:
-                # Masukkan hanya jika ini benar-benar tugas
-                supabase.table("pending_tasks").insert({
-                    "user_id": user_nickname, 
-                    "task_name": f"{title.strip()} | {desc.strip()}", 
-                    "status": "Pending"
-                }).execute()
-            
+            for line in report_res.split("\n"):
+                if "**" in line and ":" in line:
+                    supabase.table("pending_tasks").insert({"user_id": user_nickname, "task_name": line.replace("*", "").strip(), "status": "Pending"}).execute()
             st.session_state.data_saved = True; st.rerun()
 
-        pdf_data = generate_pdf(user_nickname, report_res, final_score, [])
-        st.download_button("📥 UNDUH PDF", data=pdf_data, file_name=f"Audit_{user_nickname}.pdf", use_container_width=True)
+        curr_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").execute().data
+        pdf_data = generate_pdf(user_nickname, report_res, final_score, curr_tasks)
+        st.download_button("📥 UNDUH LAPORAN PDF (MEMORI)", data=pdf_data, file_name=f"Audit_{user_nickname}.pdf", use_container_width=True)
         
-        if st.button("Audit Baru"):
+        if st.button("Reset Sesi"):
             st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved = 'input', [], False; st.rerun()
 
 # ==========================================
-# 6. TAB: DASHBOARD
+# 6. TAB: DASHBOARD & EXCEL (FIXED)
 # ==========================================
 with tabs[1]:
-    res_dash = supabase.table("audit_log").select("created_at, score").eq("user_id", user_nickname).order("created_at").execute()
+    st.subheader("📊 Analisa Performa Historis")
+    res_dash = supabase.table("audit_log").select("created_at, score, audit_report").eq("user_id", user_nickname).order("created_at").execute()
+    
     if res_dash.data:
         df = pd.DataFrame(res_dash.data)
-        st.plotly_chart(px.line(df, x='created_at', y='score', markers=True, range_y=[0, 10]), use_container_width=True)
+        df['created_at'] = pd.to_datetime(df['created_at']).dt.strftime('%Y-%m-%d %H:%M')
+        
+        # 1. Grafik Garis
+        fig = px.line(df, x='created_at', y='score', markers=True, range_y=[0, 10], title="Trend Skor Audit")
+        st.plotly_chart(fig, use_container_width=True)
+        
+        st.markdown("---")
+        
+        # 2. Excel-like Data Table
+        st.subheader("📑 Data Detail (Excel View)")
+        st.dataframe(df.sort_values(by='created_at', ascending=False), use_container_width=True)
+        
+        # 3. Download CSV (Excel Format)
         csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Ekspor Excel (CSV)", data=csv, file_name=f"History_{user_nickname}.csv", mime='text/csv')
-    else: st.info("Belum ada data.")
+        st.download_button(
+            label="📥 Download Data Riwayat (CSV/Excel)",
+            data=csv,
+            file_name=f"History_Audit_{user_nickname}.csv",
+            mime='text/csv',
+            use_container_width=True
+        )
+    else:
+        st.info("Belum ada riwayat audit untuk ditampilkan.")
