@@ -201,7 +201,11 @@ architect = Agent(
 st.set_page_config(page_title="Strategic Auditor V9.3", layout="wide")
 
 def manage_access(name, password):
-    if name == "Guest": return True
+    # Mode Guest dihapus secara total dari logika akses
+    if not name or name.strip() == "":
+        st.sidebar.warning("Silakan masukkan Nickname.")
+        return False
+        
     if not password: 
         st.sidebar.warning("Masukkan Password.")
         return False
@@ -229,8 +233,14 @@ def manage_access(name, password):
 
 # UI Login di Sidebar
 st.sidebar.title("🔐 Secure Access")
-u_name = st.sidebar.text_input("Nickname:", value="Guest").strip()
+# Placeholder menggantikan value default "Guest"
+u_name = st.sidebar.text_input("Nickname:", placeholder="Masukkan Nickname kamu...").strip()
 u_pass = st.sidebar.text_input("Password:", type="password")
+
+# Proteksi: Jika nickname kosong, aplikasi berhenti di sini
+if not u_name:
+    st.sidebar.info("👋 Selamat datang. Silakan masukkan identitas untuk mengakses sistem audit.")
+    st.stop()
 
 # Reset Sesi jika User Berganti
 if st.session_state.current_user != u_name:
