@@ -49,6 +49,7 @@ def init_state():
 init_state()
 
 def clean_txt(text):
+    """Sanitasi teks agar FPDF tidak error."""
     return text.replace("**", "").replace("###", "").replace("##", "").replace("#", "").replace("*", "-").encode('ascii', 'ignore').decode('ascii')
 
 def process_images(files):
@@ -74,32 +75,38 @@ def generate_pdf(nickname, report_text, score, tasks):
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
-# 3. AGENT SETUP
+# 3. AGENT SETUP (STRICT FORMATTING)
 # ==========================================
 consultant = Agent(
     role='Lead Strategic Auditor',
     goal='Mendiagnosa hambatan operasional melalui interogasi progresif.',
-    backstory="""Kamu auditor dingin. Wajib gunakan 'saya' dan 'kamu'. Dilarang keras kata 'Anda'.
+    backstory="""Kamu auditor senior yang dingin. Gunakan 'saya' dan 'kamu'. Dilarang kata 'Anda'.
     Berikan analisa teknis mendalam (3-4 kalimat) sebelum bertanya. Jangan mengulang pertanyaan history.""",
     llm=llm_gemini, allow_delegation=False
 )
 
 architect = Agent(
     role='Solutions Architect',
-    goal='Menyusun blueprint solusi kaku dan skor performa.',
-    backstory="""Kamu arsitek sistem. Wajib format: SKOR_FINAL: [0-10], ### DIAGNOSA_AWAL, ### ACTION_ITEMS, ### CONTINUITY_PROTOCOL.""",
+    goal='Menyusun blueprint solusi kaku.',
+    backstory="""Kamu arsitek sistem. WAJIB memberikan format: 
+    SKOR_FINAL: [0-10]
+    ### DIAGNOSA_AWAL: ...
+    ### ACTION_ITEMS: 
+    **Nama Tugas**: Deskripsi Tugas
+    **Nama Tugas**: Deskripsi Tugas
+    ### CONTINUITY_PROTOCOL: ...""",
     llm=llm_gemini, allow_delegation=False
 )
 
 # ==========================================
 # 4. UI FLOW: LOGIN GATE
 # ==========================================
-st.set_page_config(page_title="Strategic Auditor V15", layout="wide")
+st.set_page_config(page_title="Strategic Auditor V16", layout="wide")
 
 if st.session_state.current_user is None:
     _, col_mid, _ = st.columns([1, 2, 1])
     with col_mid:
-        st.markdown("<h1 style='text-align: center;'>🔐 Access</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center;'>🔐 Strategic Access</h1>", unsafe_allow_html=True)
         u_name = st.text_input("Nickname:")
         u_pass = st.text_input("Password:", type="password")
         if st.button("Masuk / Daftar", use_container_width=True):
@@ -111,20 +118,34 @@ if st.session_state.current_user is None:
                     else: st.error("Password salah.")
                 else:
                     supabase.table("user_access").insert({"username": u_name, "password": u_pass}).execute()
-                    st.success("Akun baru didaftarkan. Klik masuk lagi."); st.rerun()
+                    st.success("Akun baru terdaftar!"); st.rerun()
     st.stop()
 
-# --- SIDEBAR: CHECKLIST & STATS ---
+# --- SIDEBAR: CLEAN CHECKLIST ---
 user_nickname = st.session_state.current_user
 st.sidebar.title(f"👤 {user_nickname}")
 
-st.sidebar.markdown("### 📋 Pending Checklist")
-res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").execute()
-for t in res_tasks.data:
-    if st.sidebar.button(f"✅ {t['task_name'].split('|')[0]}", key=f"t_{t['id']}", use_container_width=True):
-        supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", t['id']).execute(); st.rerun()
+st.sidebar.markdown("---")
+st.sidebar.subheader("📋 Pending Checklist")
 
-if st.sidebar.button("Log Out"): st.session_state.current_user = None; st.rerun()
+# Fungsi Hapus Semua Tugas
+if st.sidebar.button("🗑️ Hapus Semua Tugas", use_container_width=True):
+    supabase.table("pending_tasks").delete().eq("user_id", user_nickname).eq("status", "Pending").execute(); st.rerun()
+
+# Menampilkan Daftar Tugas dengan Rapi
+res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").order("created_at", desc=True).execute()
+if res_tasks.data:
+    for t in res_tasks.data:
+        task_title = t['task_name'].split("|")[0].strip()
+        with st.sidebar.expander(f"📌 {task_title}"):
+            st.caption(t['task_name'])
+            if st.button("Selesaikan ✅", key=f"t_{t['id']}", use_container_width=True):
+                supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", t['id']).execute(); st.rerun()
+else:
+    st.sidebar.info("Tidak ada tugas pending.")
+
+st.sidebar.markdown("---")
+if st.sidebar.button("Keluar Systems"): st.session_state.current_user = None; st.rerun()
 
 # ==========================================
 # 5. MAIN PAGE: TABS
@@ -132,16 +153,10 @@ if st.sidebar.button("Log Out"): st.session_state.current_user = None; st.rerun(
 tabs = st.tabs(["🔍 Audit Sesi", "📊 Dashboard & Excel Data"])
 
 with tabs[0]:
-    st.info("""
-    **INSTRUKSI OPERASIONAL:**
-    1. **Tantangan**: Masukkan masalah teknismu di kolom input.
-    2. **Interogasi**: Jawab 4 tahap interogasi. Gunakan **tombol foto** untuk bukti visual.
-    3. **Final Report**: Dapatkan skor dan blueprint solusi.
-    4. **Download PDF**: Simpan laporan sebagai memori untuk sesi berikutnya.
-    """)
-
+    st.subheader("Fase Audit Strategis")
+    
     if st.session_state.audit_stage == 'input':
-        u_in = st.text_area("Apa tantangan strategis/teknis yang ingin kamu audit hari ini?", height=150)
+        u_in = st.text_area("Apa tantangan strategis/teknismu hari ini?", height=150)
         u_f = st.file_uploader("Lampirkan PDF Memori / Bukti Visual", accept_multiple_files=True)
         if st.button("Mulai Audit"):
             if len(u_in) > 5:
@@ -150,12 +165,12 @@ with tabs[0]:
                 st.session_state.audit_stage, st.session_state.q_index = 'interrogation', 1; st.rerun()
 
     elif st.session_state.audit_stage == 'interrogation':
-        st.subheader(f"🔍 Interogasi Auditor ({st.session_state.q_index}/4)")
+        st.subheader(f"🔍 Interogasi {st.session_state.q_index}/4")
         hist_text = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
         
         task_q = Task(
-            description=f"History: {hist_text}. Masalah: {st.session_state.initial_tasks}. Tahap {st.session_state.q_index}/4. Analisa mendalam dan tanya hal baru. Gunakan 'kamu'.",
-            agent=consultant, expected_output="Analisa teknis dan satu pertanyaan baru."
+            description=f"History: {hist_text}. Masalah: {st.session_state.initial_tasks}. Tahap {st.session_state.q_index}/4. Berikan analisa teknis 3-4 kalimat dan tanya 1 hal baru. Gunakan 'kamu'.",
+            agent=consultant, expected_output="Analisa dan satu pertanyaan baru."
         )
         with st.spinner("Auditor sedang membedah sistem..."):
             q_text = str(Crew(agents=[consultant], tasks=[task_q]).kickoff().raw)
@@ -175,7 +190,7 @@ with tabs[0]:
         st.subheader("🏁 Final Solution Blueprint")
         with st.spinner("Membangun laporan akhir..."):
             full_hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
-            task_f = Task(description=f"History: {full_hist}.", agent=architect, expected_output="SKOR_FINAL: [X.X], ### DIAGNOSA_AWAL, ### ACTION_ITEMS, ### CONTINUITY_PROTOCOL.")
+            task_f = Task(description=f"History: {full_hist}.", agent=architect, expected_output="SKOR_FINAL: [0-10], ### DIAGNOSA_AWAL, ### ACTION_ITEMS, ### CONTINUITY_PROTOCOL.")
             report_res = str(Crew(agents=[architect], tasks=[task_f]).kickoff().raw)
         
         st.markdown(report_res)
@@ -185,47 +200,41 @@ with tabs[0]:
         
         if not st.session_state.data_saved:
             supabase.table("audit_log").insert({"user_id": user_nickname, "score": final_score, "audit_report": report_res}).execute()
-            for line in report_res.split("\n"):
-                if "**" in line and ":" in line:
-                    supabase.table("pending_tasks").insert({"user_id": user_nickname, "task_name": line.replace("*", "").strip(), "status": "Pending"}).execute()
+            # PERBAIKAN REGEX CHECKLIST (V16)
+            matches = re.findall(r"\*\*(.+?)\*\*[:\-]\s*(.+)", report_res)
+            for title, desc in matches:
+                if len(title.strip()) > 3:
+                    supabase.table("pending_tasks").insert({
+                        "user_id": user_nickname, 
+                        "task_name": f"{title.strip()} | {desc.strip()}", 
+                        "status": "Pending"
+                    }).execute()
             st.session_state.data_saved = True; st.rerun()
 
-        curr_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").execute().data
-        pdf_data = generate_pdf(user_nickname, report_res, final_score, curr_tasks)
-        st.download_button("📥 UNDUH LAPORAN PDF (MEMORI)", data=pdf_data, file_name=f"Audit_{user_nickname}.pdf", use_container_width=True)
+        pdf_data = generate_pdf(user_nickname, report_res, final_score, res_tasks.data)
+        st.download_button("📥 UNDUH LAPORAN PDF", data=pdf_data, file_name=f"Audit_{user_nickname}.pdf", use_container_width=True)
         
-        if st.button("Reset Sesi"):
+        if st.button("Reset & Mulai Audit Baru"):
             st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved = 'input', [], False; st.rerun()
 
 # ==========================================
-# 6. TAB: DASHBOARD & EXCEL (FIXED)
+# 6. TAB: DASHBOARD & EXCEL VIEW
 # ==========================================
 with tabs[1]:
-    st.subheader("📊 Analisa Performa Historis")
+    st.subheader("📑 Riwayat Audit & Data Excel")
     res_dash = supabase.table("audit_log").select("created_at, score, audit_report").eq("user_id", user_nickname).order("created_at").execute()
     
     if res_dash.data:
         df = pd.DataFrame(res_dash.data)
         df['created_at'] = pd.to_datetime(df['created_at']).dt.strftime('%Y-%m-%d %H:%M')
         
-        # 1. Grafik Garis
-        fig = px.line(df, x='created_at', y='score', markers=True, range_y=[0, 10], title="Trend Skor Audit")
+        fig = px.line(df, x='created_at', y='score', markers=True, range_y=[0, 10], title="Trend Skor")
         st.plotly_chart(fig, use_container_width=True)
         
-        st.markdown("---")
-        
-        # 2. Excel-like Data Table
-        st.subheader("📑 Data Detail (Excel View)")
+        st.markdown("### 📊 Excel View")
         st.dataframe(df.sort_values(by='created_at', ascending=False), use_container_width=True)
         
-        # 3. Download CSV (Excel Format)
         csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="📥 Download Data Riwayat (CSV/Excel)",
-            data=csv,
-            file_name=f"History_Audit_{user_nickname}.csv",
-            mime='text/csv',
-            use_container_width=True
-        )
+        st.download_button("📥 Ekspor Semua Data ke Excel (CSV)", data=csv, file_name=f"History_{user_nickname}.csv", mime='text/csv')
     else:
-        st.info("Belum ada riwayat audit untuk ditampilkan.")
+        st.info("Belum ada data audit.")
