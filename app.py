@@ -143,32 +143,35 @@ def extract_and_save_tasks(audit_result, nickname):
             }).execute()
 
 # ==========================================
-# 3. AGENT SETUP (V9.6 - STRATEGIC AUDITOR)
+# 3. AGENT SETUP (V9.7 - STRATEGIC AUDITOR)
 # ==========================================
 consultant = Agent(
     role='Lead Strategic Auditor',
-    goal='Mendiagnosa akar masalah melalui pola data awal dan memastikan keberlanjutan konteks.',
-    backstory="""Kamu adalah auditor tingkat tinggi yang dingin, objektif, dan benci asumsi buta. 
-    Kamu dilarang memberikan apresiasi. Gunakan 'saya' dan 'kamu'.
+    goal='Mendiagnosa akar masalah melalui interogasi teknis 4 tahap tanpa kebocoran fase.',
+    backstory="""Kamu adalah auditor tingkat tinggi yang dingin, objektif, dan sangat benci asumsi buta. 
+    Kamu dilarang memberikan apresiasi atau basa-basi. Gunakan 'saya' dan 'kamu'.
 
-    ALUR LOGIKA WAJIB (STRICT PROTOCOL):
-    1. EVALUASI INPUT: Jika user sudah menjelaskan TUJUAN dan KONTEKS di awal, JANGAN tanyakan lagi.
-    2. MICRO-AUDIT: Jika data sedikit (misal: 3 transaksi), JANGAN menolak. Lakukan analisa 'gejala' berdasarkan pola (inkonsistensi, panik, lot abnormal).
-    3. CONTINUITY PROTOCOL (PENTING): Pada pertanyaan terakhir (Q4), kamu WAJIB menyimpulkan diagnosa awal dan menginstruksikan user untuk:
+    PROTOKOL INTEROGASI KETAT (WAJIB):
+    1. PERTANYAAN 1-3: Fokus 100% pada penggalian data teknis, variansi, dan bukti objektif. 
+       DILARANG menyuruh user mengunduh PDF atau memberikan instruksi 'kembali lagi di masa depan' pada tahap ini.
+    
+    2. PERTANYAAN 4 (FINAL): Lakukan Micro-Audit berdasarkan semua jawaban sebelumnya. 
+       HANYA pada tahap ini kamu wajib menjalankan 'Continuity Protocol':
        - Mengunduh PDF laporan hari ini.
-       - Kembali dalam waktu spesifik (7-14 hari) dengan data baru yang lengkap.
-       - Memberikan file PDF hari ini kembali sebagai 'Memori Konteks' di sesi depan.
-    4. PENERJEMAH TEKNIS: Sampaikan istilah manajemen dalam bahasa awam.""",
+       - Instruksi kembali dalam 7-14 hari dengan data baru.
+       - Memberikan file PDF hari ini sebagai 'Memori Konteks' di sesi depan.
+
+    Jangan melompati urutan ini. Fokus pada satu tugas per tahap.""",
     llm=llm_gemini,
     allow_delegation=False
 )
 
 architect = Agent(
     role='High-Leverage Solutions Architect',
-    goal='Memberikan blueprint solusi kaku dengan fokus pada 20% tindakan untuk 80% hasil.',
+    goal='Memberikan blueprint solusi kaku dengan instruksi keberlanjutan konteks.',
     backstory="""Kamu arsitek yang benci inefisiensi. Wajib memberikan output:
     1. SKOR_FINAL: [0.0 - 10.0]
-    2. ### DIAGNOSA_AWAL: Analisa pola dari interaksi saat ini.
+    2. ### DIAGNOSA_AWAL: Analisa pola teknis.
     3. ### ACTION_ITEMS: Tugas dengan format **Nama Tugas**: Deskripsi teknis.
     4. ### CONTINUITY_PROTOCOL: Instruksi detail kapan harus kembali dan perintah mengunggah PDF hari ini di sesi mendatang.""",
     llm=llm_gemini,
@@ -178,7 +181,7 @@ architect = Agent(
 # ==========================================
 # 4. TAMPILAN WEB & OTENTIKASI SISTEM
 # ==========================================
-st.set_page_config(page_title="Strategic Auditor V9.6", layout="wide")
+st.set_page_config(page_title="Strategic Auditor V9.7", layout="wide")
 
 def manage_access(name, password):
     if not name or name.strip() == "": return False
@@ -208,7 +211,7 @@ if st.session_state.current_user is None:
             else: st.error("Akses Ditolak.")
     st.stop()
 
-# DASHBOARD & NAVIGATION
+# NAVIGATION
 user_nickname = st.session_state.current_user
 st.sidebar.title(f"👤 {user_nickname}")
 page = st.sidebar.radio("Navigasi:", ["Audit & Konsultasi", "Dashboard"])
@@ -258,17 +261,16 @@ if page == "Audit & Konsultasi":
     elif st.session_state.audit_stage == 'interrogation':
         st.subheader(f"🔍 Interogasi Auditor ({st.session_state.q_index}/4)")
         
-        # LOGIKA TANGGAL DINAMIS UNTUK Q4
+        # LOGIKA PENGUNCIAN FASE (V9.7)
         today = datetime.now()
         ret_date = (today + timedelta(days=7)).strftime('%d %B %Y')
-        curr_date = today.strftime('%d %B %Y')
 
         if st.session_state.q_index < 4:
-            exp_out = "Satu pertanyaan teknis spesifik."
-            desc_task = f"Input: {st.session_state.initial_tasks}. History: {st.session_state.chat_history}."
+            exp_out = "Satu pertanyaan teknis spesifik. DILARANG memberikan instruksi penutup atau Continuity Protocol."
+            desc_task = f"Gali data teknis terkait: {st.session_state.initial_tasks}. Sejarah: {st.session_state.chat_history}. Fokus pada satu variabel spesifik."
         else:
-            exp_out = f"Micro-Audit pola saat ini dan instruksi kembali pada {ret_date}."
-            desc_task = f"HARI INI: {curr_date}. Lakukan Micro-Audit. JANGAN minta data baru. Perintahkan user kembali pada {ret_date} dengan membawa PDF hari ini sebagai Memori Konteks."
+            exp_out = f"Micro-Audit pola dan Instruksi Continuity Protocol untuk kembali pada {ret_date}."
+            desc_task = f"Lakukan kesimpulan (Micro-Audit) dari history: {st.session_state.chat_history}. Perintahkan user unduh PDF dan kembali pada {ret_date}."
 
         with st.spinner("Auditor sedang berpikir..."):
             task_q = Task(description=desc_task, agent=consultant, expected_output=exp_out)
