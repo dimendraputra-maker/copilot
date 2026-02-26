@@ -203,7 +203,6 @@ architect = Agent(
 # ==========================================
 st.set_page_config(page_title="Strategic Auditor V9.5", layout="wide")
 
-# Fungsi akses tetap sama
 def manage_access(name, password):
     if not name or name.strip() == "": return False
     if not password: return False
@@ -236,19 +235,19 @@ if st.session_state.current_user is None:
                 st.rerun()
             else:
                 st.error("Nickname atau Password salah!")
-    st.stop() # Menahan aplikasi agar tidak menampilkan konten lain sebelum login
+    st.stop() 
 
-# --- JIKA SUDAH LOGIN, SEMUA FITUR DI BAWAH INI AKAN MUNCUL ---
+# --- JIKA SUDAH LOGIN ---
 user_nickname = st.session_state.current_user
 
-# Tombol Logout dan Navigasi di Sidebar
+# Sidebar: Navigasi & Logout
 st.sidebar.title(f"👤 {user_nickname}")
 page = st.sidebar.radio("Navigasi:", ["Audit & Konsultasi", "Dashboard"])
 if st.sidebar.button("Keluar Sistem"):
     st.session_state.current_user = None
     st.rerun()
 
-# --- SIDEBAR CHECKLIST (TETAP ADA) ---
+# Sidebar: Checklist
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"### 📋 Checklist: {user_nickname}")
 if st.sidebar.button("🗑️ Hapus Tugas Mangkrak"):
@@ -266,13 +265,12 @@ if res_tasks.data:
             st.rerun()
         st.sidebar.markdown("---")
 
-# --- LOGIKA HALAMAN UTAMA (AUDIT & KONSULTASI) ---
+# --- HALAMAN UTAMA ---
 if page == "Audit & Konsultasi":
     st.title(f"Lead Auditor AI: {user_nickname}")
     st.markdown("---")
 
     if st.session_state.audit_stage == 'input':
-        # Instruksi Penggunaan Lengkap tetap saya pertahankan di sini
         st.warning("""
         ### **🛠️ Panduan Operasional Konsultasi**
         1. **Input Tantangan**: Jelaskan kendala teknis atau rencana strategismu secara detail.
@@ -291,14 +289,73 @@ if page == "Audit & Konsultasi":
                     st.session_state.q_index = 1
                     st.rerun()
 
-    # Logika 'interrogation' dan 'report' tetap berlanjut di bawah sesuai kode kamu...
-    elif page == "Dashboard":
-        st.title(f"📊 Tracking: {user_nickname}")
-        res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).order("created_at", desc=False).execute()
-        if res_log.data:
-            df = pd.DataFrame(res_log.data)
-            df['created_at'] = pd.to_datetime(df['created_at'])
-            st.plotly_chart(px.line(df, x='created_at', y='score', markers=True, range_y=[0, 10]), use_container_width=True)
-            st.dataframe(df.sort_values(by='created_at', ascending=False))
-        else:
-            st.info("Belum ada data audit.")
+    elif st.session_state.audit_stage == 'interrogation':
+        st.subheader(f"🔍 Analisis Auditor ({st.session_state.q_index}/4)")
+        with st.spinner("Auditor sedang menyusun interogasi..."):
+            hist_str = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
+            task_q = Task(
+                description=f"HARI INI: {datetime.now().strftime('%Y-%m-%d')}. Input User: {st.session_state.initial_tasks}. History: {hist_str}.",
+                agent=consultant,
+                expected_output="Satu pertanyaan strategis/permintaan data teknis."
+            )
+            current_q = str(Crew(agents=[consultant], tasks=[task_q]).kickoff().raw)
+        
+        st.info(current_q)
+        u_ans = st.text_area("Input Jawaban:", key=f"ans_{st.session_state.q_index}")
+        u_img = st.file_uploader("Lampirkan Bukti", accept_multiple_files=True, key=f"img_{st.session_state.q_index}")
+        
+        if st.button("Kirim Data"):
+            img_data = f" [Foto: {process_images(u_img)}]" if u_img else ""
+            st.session_state.chat_history.append({"q": current_q, "a": u_ans + img_data})
+            if st.session_state.q_index < 4:
+                st.session_state.q_index += 1
+            else:
+                st.session_state.audit_stage = 'report'
+            st.rerun()
+
+    elif st.session_state.audit_stage == 'report':
+        with st.spinner("Membangun Laporan..."):
+            past_context = get_user_context(user_nickname)
+            full_hist = f"Input: {st.session_state.initial_tasks}\n" + "\n".join([f"Q{i+1}: {h['q']}\nA: {h['a']}" for i, h in enumerate(st.session_state.chat_history)])
+            task_fin = Task(
+                description=f"HISTORI: {past_context}. INTERAKSI: {full_hist}. Berikan SKOR_FINAL [0-10] dan ### ACTION_ITEMS.",
+                agent=architect,
+                expected_output="Laporan blueprint solusi lengkap."
+            )
+            res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
+            st.markdown(res)
+            save_audit_to_db(st.session_state.initial_tasks, res, user_nickname)
+            extract_and_save_tasks(res, user_nickname)
+            
+            try:
+                p_tasks = supabase.table("pending_tasks").select("task_name").eq("user_id", user_nickname).eq("status", "Pending").execute().data
+                score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", res, re.IGNORECASE)
+                final_score = score_match.group(1) if score_match else "0.0"
+                pdf_bytes = generate_pdf(user_nickname, res, final_score, p_tasks)
+                st.download_button(label="📥 Download PDF", data=pdf_bytes, file_name=f"Audit_{user_nickname}.pdf", mime="application/pdf")
+            except: st.error("Gagal cetak PDF.")
+
+            if st.button("Selesai & Reset"):
+                st.session_state.audit_stage = 'input'
+                st.session_state.chat_history = []
+                st.session_state.data_saved = False
+                st.rerun()
+
+# --- HALAMAN DASHBOARD (DIPERBAIKI) ---
+elif page == "Dashboard":
+    st.title(f"📊 Tracking: {user_nickname}")
+    st.markdown("---")
+    res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).order("created_at", desc=False).execute()
+    
+    if res_log.data:
+        df = pd.DataFrame(res_log.data)
+        df['created_at'] = pd.to_datetime(df['created_at'])
+        
+        # Grafik Performa
+        st.plotly_chart(px.line(df, x='created_at', y='score', markers=True, range_y=[0, 10]), use_container_width=True)
+        
+        # Dataframe Riwayat
+        st.subheader("Riwayat Detail")
+        st.dataframe(df.sort_values(by='created_at', ascending=False), use_container_width=True)
+    else:
+        st.info("Belum ada data audit tercatat.")
