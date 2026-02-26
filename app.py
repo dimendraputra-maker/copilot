@@ -143,11 +143,11 @@ def save_audit_to_db(user_input, audit_result, nickname):
 
 def extract_and_save_tasks(audit_result, nickname):
     """Logika Ekstraksi Positif: Hanya mengambil baris berformat **Judul**: Deskripsi."""
-    match = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", audit_result, desc=True | re.IGNORECASE)
+    match = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", audit_result, re.DOTALL | re.IGNORECASE)
     if not match: return
     
     content = match.group(1)
-    valid_tasks = re.findall(r"\*\frac{.}{.}\*\*\s*[:\-]\s*(.+)", content)
+    valid_tasks = re.findall(r"\*\*(.+?)\*\*[:\-]\s*(.+)", content)
     
     saved_count = 0
     for title, desc in valid_tasks:
@@ -201,6 +201,7 @@ architect = Agent(
 st.set_page_config(page_title="Strategic Auditor V9.3", layout="wide")
 
 def manage_access(name, password):
+    # Strict: Tanpa mode Guest
     if not name or name.strip() == "":
         st.sidebar.warning("Silakan masukkan Nickname.")
         return False
@@ -229,13 +230,15 @@ def manage_access(name, password):
 
 # UI Login di Sidebar
 st.sidebar.title("🔐 Secure Access")
-u_name = st.sidebar.text_input("Nickname:", placeholder="Masukkan Nickname...").strip()
+u_name = st.sidebar.text_input("Nickname:", placeholder="Masukkan Nickname kamu...").strip()
 u_pass = st.sidebar.text_input("Password:", type="password")
 
+# Proteksi: Berhenti jika nickname kosong
 if not u_name:
-    st.sidebar.info("👋 Selamat datang. Silakan login untuk memulai.")
+    st.sidebar.info("👋 Selamat datang. Silakan masukkan identitas untuk mengakses sistem audit.")
     st.stop()
 
+# Reset Sesi jika User Berganti
 if st.session_state.current_user != u_name:
     st.session_state.audit_stage = 'input'
     st.session_state.chat_history = []
@@ -255,7 +258,7 @@ if is_authenticated:
         st.sidebar.success("Checklist dibersihkan!")
         st.rerun()
 
-    # PERBAIKAN DI SINI: Query + Definisi variabel pending
+    # Perubahan: Penambahan order by created_at
     res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").order("created_at", desc=True).execute()
     pending = res_tasks.data
 
@@ -277,7 +280,12 @@ if is_authenticated:
         st.markdown("---")
 
         if st.session_state.audit_stage == 'input':
-            st.warning("### **🛠️ Panduan Operasional Konsultasi**\n1. Input Tantangan\n2. Lampirkan Bukti\n3. Jawab Interogasi")
+            st.warning("""
+            ### **🛠️ Panduan Operasional Konsultasi**
+            1. **Input Tantangan**: Jelaskan kendala teknis atau rencana strategismu.
+            2. **Lampirkan Bukti**: Gunakan fitur upload untuk screenshot data.
+            3. **Interaksi**: Jawab permintaan data teknis dari AI Auditor.
+            """)
             u_in = st.text_area("Apa tantangan teknis atau rencana yang ingin kamu audit?", height=120)
             u_files = st.file_uploader("Upload Bukti Visual/Data (Opsional)", accept_multiple_files=True)
             
@@ -297,7 +305,7 @@ if is_authenticated:
                 task_q = Task(
                     description=f"HARI INI: {datetime.now().strftime('%Y-%m-%d')}. Masalah: {st.session_state.initial_tasks}. History: {hist_str}.",
                     agent=consultant,
-                    expected_output="Satu permintaan data teknis spesifik."
+                    expected_output="Satu permintaan data teknis spesifik disertai Logika Teknis."
                 )
                 current_q = str(Crew(agents=[consultant], tasks=[task_q]).kickoff().raw)
             
@@ -321,14 +329,35 @@ if is_authenticated:
                 full_hist = f"Input: {st.session_state.initial_tasks}\n" + "\n".join([f"Q{i+1}: {h['q']}\nA: {h['a']}" for i, h in enumerate(st.session_state.chat_history)])
                 
                 task_fin = Task(
-                    description=f"KONTEKS WAKTU: {today_str}. HISTORI: {past_context}. INTERAKSI: {full_hist}. Wajib SKOR_FINAL: [0.0-10.0].",
+                    description=f"""
+                    KONTEKS WAKTU: {today_str}. 
+                    HISTORI: {past_context}
+                    INTERAKSI: {full_hist}
+                    
+                    Wajib memberikan SKOR_FINAL: [0.0 - 10.0].
+                    Format tugas di bawah header '### ACTION_ITEMS' WAJIB menggunakan format **Judul**: Deskripsi.
+                    1. HABIT_SYSTEMS (Tanpa deadline).
+                    2. PROJECT_TASKS (Wajib deadline 2026).
+                    """,
                     agent=architect,
-                    expected_output="Laporan blueprint solusi."
+                    expected_output="Laporan blueprint solusi dengan format tugas yang divalidasi sistem."
                 )
                 res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
                 st.markdown(res)
+                
                 save_audit_to_db(st.session_state.initial_tasks, res, user_nickname)
                 extract_and_save_tasks(res, user_nickname)
+                
+                st.markdown("---")
+                try:
+                    p_tasks = supabase.table("pending_tasks").select("task_name").eq("user_id", user_nickname).eq("status", "Pending").execute().data
+                    score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", res, re.IGNORECASE)
+                    final_score = score_match.group(1) if score_match else "0.0"
+                    
+                    pdf_bytes = generate_pdf(user_nickname, res, final_score, p_tasks)
+                    st.download_button(label="📥 Download PDF Report", data=pdf_bytes, file_name=f"Audit_{user_nickname}.pdf", mime="application/pdf")
+                except Exception as e:
+                    st.error(f"Gagal menyiapkan PDF: {e}")
                 
                 if st.button("Selesai & Reset"):
                     st.session_state.audit_stage = 'input'
@@ -344,3 +373,5 @@ if is_authenticated:
             df['created_at'] = pd.to_datetime(df['created_at'])
             st.plotly_chart(px.line(df, x='created_at', y='score', markers=True, range_y=[0, 10]), use_container_width=True)
             st.dataframe(df.sort_values(by='created_at', ascending=False))
+        else:
+            st.info("Belum ada data audit untuk identitas ini.")
