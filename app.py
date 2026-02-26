@@ -143,22 +143,23 @@ def extract_and_save_tasks(audit_result, nickname):
             }).execute()
 
 # ==========================================
-# 3. AGENT SETUP (V9.8 - DEEP-DIVE AUDITOR)
+# 3. AGENT SETUP (V9.9 - ADAPTIVE AUDITOR)
 # ==========================================
 consultant = Agent(
     role='Lead Strategic Auditor',
-    goal='Mendiagnosa akar masalah melalui interogasi teknis mendalam dan tajam.',
+    goal='Mendiagnosa akar masalah dengan bahasa yang disesuaikan dengan tingkat pemahaman user.',
     backstory="""Kamu adalah auditor tingkat tinggi yang dingin, objektif, dan sangat benci inefisiensi. 
-    Dilarang memberikan apresiasi atau basa-basi. Gunakan 'saya' dan 'kamu'.
+    Kamu dilarang memberikan apresiasi atau basa-basi. Gunakan 'saya' dan 'kamu'.
 
-    STANDAR KUALITAS PERTANYAAN (STRICT):
-    1. ANALISA TERLEBIH DAHULU: Sebelum melontarkan pertanyaan, berikan analisa singkat mengenai pola atau anomali yang kamu temukan dari jawaban user sebelumnya.
-    2. LOGIKA TEKNIS: Setiap pertanyaan wajib disertai alasan mengapa data tersebut dibutuhkan.
-    3. DEPTH OVER BREVITY: Jangan memberikan pertanyaan singkat seperti bot. Gali variabel teknis (Slippage, Variansi, RRR, Volatilitas, Kondisi Kognitif).
+    PROTOKOL ADAPTASI & KUALITAS (WAJIB):
+    1. DETEKSI LEVEL: Analisis input user. Jika user tidak menggunakan istilah teknis, gunakan pendekatan awam. Jika user profesional, gunakan bahasa teknis tingkat tinggi.
+    2. ANALOGI JEMBATAN: Jika kamu menggunakan istilah teknis (Slippage, RRR, Bottleneck, Variansi, Kognitif), kamu WAJIB memberikan analogi dunia nyata yang sangat sederhana agar user awam bisa menjawab dengan akurat.
+    3. ANALISA TERLEBIH DAHULU: Sebelum bertanya, berikan analisa singkat mengenai pola atau anomali yang kamu temukan dari jawaban user sebelumnya.
+    4. LOGIKA TEKNIS: Sertakan alasan mengapa data tersebut dibutuhkan dalam proses diagnosa.
 
-    PROTOKOL FASE (WAJIB):
+    PROTOKOL FASE (STRICT):
     - PERTANYAAN 1-3: Fokus 100% pada Deep-Dive data teknis. DILARANG memberikan instruksi penutup, PDF, atau menyuruh user kembali di masa depan.
-    - PERTANYAAN 4 (FINAL): Lakukan Micro-Audit Final berdasarkan semua data. Jalankan Continuity Protocol (Unduh PDF & Jadwal Kembali).""",
+    - PERTANYAAN 4 (FINAL): Lakukan Micro-Audit Final. Jalankan Continuity Protocol (Instruksi Unduh PDF & Jadwal Kembali).""",
     llm=llm_gemini,
     allow_delegation=False
 )
@@ -170,7 +171,7 @@ architect = Agent(
     1. SKOR_FINAL: [0.0 - 10.0]
     2. ### DIAGNOSA_AWAL: Analisa pola teknis dan perilaku yang ditemukan.
     3. ### ACTION_ITEMS: Tugas dengan format **Nama Tugas**: Deskripsi teknis.
-    4. ### CONTINUITY_PROTOCOL: Instruksi detail kapan harus kembali dan perintah mengunggah PDF hari ini di sesi mendatang.""",
+    4. ### CONTINUITY_PROTOCOL: Instruksi detail kapan harus kembali, data apa yang harus dibawa, dan perintah mengunggah PDF hari ini di sesi mendatang.""",
     llm=llm_gemini,
     allow_delegation=False
 )
@@ -241,7 +242,7 @@ if page == "Audit & Konsultasi":
     if st.session_state.audit_stage == 'input':
         st.warning("""
         ### **🛠️ Panduan Operasional**
-        1. **Input**: Jelaskan masalah teknis atau rencana strategismu secara detail.
+        1. **Input**: Jelaskan masalah teknis atau tujuan mu secara detail dalam sesi audit ini.
         2. **Memori**: Jika ini sesi lanjutan, **unggah file PDF** audit sebelumnya.
         3. **Continuity**: Simpan PDF hasil hari ini sebagai 'jembatan memori' sesi depan.
         """)
@@ -263,15 +264,13 @@ if page == "Audit & Konsultasi":
         ret_date = (today + timedelta(days=7)).strftime('%d %B %Y')
 
         if st.session_state.q_index < 4:
-            exp_out = "Analisa teknis mendalam terhadap pola user diikuti oleh satu pertanyaan investigatif yang tajam. DILARANG memberikan instruksi penutup."
+            exp_out = "Analisa pola, penjelasan istilah teknis dengan analogi, dan satu pertanyaan investigatif."
             desc_task = f"""
-            TUGAS AUDIT (Fase {st.session_state.q_index}/4):
-            Berdasarkan input: {st.session_state.initial_tasks} dan history: {st.session_state.chat_history}.
-            
-            WAJIB:
-            1. Berikan analisa pola teknis singkat dari interaksi sebelumnya.
-            2. Berikan satu pertanyaan mendalam untuk menggali variabel spesifik.
-            3. Jangan berikan instruksi Continuity Protocol/PDF sebelum pertanyaan ke-4.
+            TUGAS:
+            1. Bedah jawaban user sebelumnya: {st.session_state.chat_history}.
+            2. Jika ada istilah rumit yang akan kamu tanyakan, berikan analogi dunian nyata.
+            3. Ajukan satu pertanyaan tajam untuk menggali data: {st.session_state.initial_tasks}.
+            4. JANGAN berikan instruksi Continuity Protocol di sini.
             """
         else:
             exp_out = f"Micro-Audit komprehensif dan Instruksi Continuity Protocol untuk kembali pada {ret_date}."
