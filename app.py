@@ -142,8 +142,35 @@ else:
 page = st.tabs(["🔍 Sesi Audit", "📊 Dashboard"])
 
 with page[0]:
-    st.error("### ⚠️ INSTRUKSI: Masukkan tantangan baru & lampirkan PDF Laporan Lama untuk memori audit.")
+    # --- BAGIAN YANG DIUBAH: HANYA INSTRUKSI TEKS ---
+    st.error("### ⚠️ PROTOKOL PENGGUNAAN & CARA KERJA SISTEM")
     
+    col_inst1, col_inst2 = st.columns(2)
+    
+    with col_inst1:
+        st.markdown("""
+        **1. Input & Memory Bridge (Penting!)**
+        Sistem ini bekerja dengan logika *Context-First*. Jika ini adalah lanjutan dari audit sebelumnya, **Wajib** unggah PDF Laporan Audit terakhir.
+        * **Cara Kerja**: AI Vision akan membedah PDF tersebut, mengambil skor terakhir, dan memahami tugas mana yang belum selesai agar tidak terjadi pengulangan diagnosa.
+        
+        **2. Fase Interogasi Mendalam**
+        Kamu akan melewati 4 tahap pertanyaan. AI tidak hanya bertanya, tapi akan memberikan **Analisa Pola** terlebih dahulu.
+        """)
+
+    with col_inst2:
+        st.markdown("""
+        **3. Validasi Bukti Visual**
+        Gunakan fitur unggah foto di setiap tahap jika ada data chart, tabel Excel, atau screenshot operasional.
+        * **Cara Kerja**: Vision AI mengekstrak data mentah dari gambar sebagai fakta objektif untuk meminimalisir bias.
+        
+        **4. Blueprint & Checklist Otomatis**
+        Di akhir sesi, sistem akan menghasilkan laporan PDF dan 'Action Items'.
+        * **Cara Kerja**: Tugas yang muncul di Sidebar adalah hasil filter ketat dari solusi yang paling berdampak (*High-Leverage*).
+        """)
+    st.markdown("---")
+    # --- AKHIR PERUBAHAN INSTRUKSI ---
+
+    # LOGIKA BERIKUTNYA TETAP SAMA PERSIS DENGAN KODE KAMU
     if st.session_state.audit_stage == 'input':
         u_in = st.text_area("Apa tantangan strategis/teknismu hari ini?", height=150)
         u_f = st.file_uploader("Upload Foto/PDF Laporan Lama (Memory Bridge)", accept_multiple_files=True)
@@ -185,7 +212,6 @@ with page[0]:
             
             if not st.session_state.data_saved:
                 supabase.table("audit_log").insert({"user_id": user_nickname, "score": f_score, "audit_report": res, "input_preview": st.session_state.initial_tasks[:100]}).execute()
-                # Extraction Fixed
                 action_section = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", res, re.DOTALL | re.IGNORECASE)
                 if action_section:
                     tasks = re.findall(r"\*\*(.+?)\*\*[:\-]\s*(.+)", action_section.group(1))
