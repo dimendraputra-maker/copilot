@@ -102,6 +102,7 @@ architect = Agent(
     Gunakan garis pemisah (---) di setiap pergantian bagian agar laporan terlihat elegan dan mudah dipindai mata.""",
     llm=llm_gemini
 )
+
 # ==========================================
 # 4. LOGIN & SIDEBAR
 # ==========================================
@@ -128,18 +129,16 @@ user_nickname = st.session_state.current_user
 st.sidebar.title(f"👤 {user_nickname}")
 st.sidebar.markdown("### 📋 Pending Tasks")
 
-# Ambil data terlebih dahulu secara terpisah
 res_t = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").order("created_at", desc=True).execute()
 res_tasks_data = res_t.data
 
 if res_tasks_data:
     for t in res_tasks_data:
-        # Pisahkan Judul dan Deskripsi
         parts = t['task_name'].split("|")
-        title = parts[0].strip()
+        title_with_date = parts[0].strip()
         desc = parts[1].strip() if len(parts) > 1 else "Eksekusi segera."
         
-        with st.sidebar.expander(f"📌 {title}"):
+        with st.sidebar.expander(f"📌 {title_with_date}"):
             st.write(desc)
             if st.button("Selesaikan", key=f"btn_{t['id']}", use_container_width=True):
                 supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", t['id']).execute()
@@ -153,36 +152,29 @@ else:
 page = st.tabs(["🔍 Sesi Audit", "📊 Dashboard"])
 
 with page[0]:
-    # --- INSTRUKSI DETAIL DALAM KOTAK KUNING ---
     st.warning("### ⚠️ PANDUAN OPERASIONAL STRATEGIC COPILOT")
-    
     col1, col2, col3 = st.columns(3)
     
     with col1:
         st.markdown("""
         **1. INPUT & MEMORY BRIDGE**
-        * Masukkan tantangan teknis atau rencana strategismu secara mendalam di kotak input.
-        * **Penting:** Jika ini lanjutan sesi sebelumnya, unggah **PDF Laporan Terakhir** agar AI mengenali konteks dan progres tugas yang sudah ada.
+        * Masukkan tantangan teknis atau rencana strategismu secara mendalam.
+        * **Penting:** Jika ini lanjutan, unggah **PDF Laporan Terakhir** agar AI ingat konteksnya.
         """)
-        
     with col2:
         st.markdown("""
         **2. INTEROGASI & VALIDASI**
-        * Jawab **4 tahap pertanyaan** investigasi dari AI Auditor untuk membongkar *blind spot*.
-        * Gunakan fitur **Upload Foto** di setiap tahap untuk melampirkan screenshot data atau bukti lapangan guna memperkuat akurasi analisa AI.
+        * Jawab **4 tahap pertanyaan** investigasi untuk membongkar *blind spot*.
+        * Gunakan **Upload Foto** di setiap tahap untuk melampirkan bukti lapangan.
         """)
-        
     with col3:
         st.markdown("""
         **3. OUTPUT & EKSEKUSI**
-        * Dapatkan **Skor Performa** dan **Blueprint Solusi** yang mencakup diagnosa serta langkah perbaikan.
-        * Cek **Sidebar (Action Items)**: Tugas baru akan otomatis muncul di sana untuk kamu eksekusi dan pantau progresnya.
+        * Dapatkan **Skor Performa** dan **Blueprint Solusi**.
+        * Cek **Sidebar (Action Items)**: Tugas berlabel tanggal akan otomatis muncul di sana.
         """)
-    
     st.markdown("---")
-    # --- SELESAI INSTRUKSI ---
 
-    # LOGIKA BERIKUTNYA TETAP SAMA PERSIS DENGAN KODE KAMU
     if st.session_state.audit_stage == 'input':
         u_in = st.text_area("Apa tantangan strategis/teknismu hari ini?", height=150)
         u_f = st.file_uploader("Upload Foto/PDF Laporan Lama (Memory Bridge)", accept_multiple_files=True)
@@ -223,18 +215,20 @@ with page[0]:
             f_score = float(score_match.group(1)) if score_match else 0.0
             
             if not st.session_state.data_saved:
-                from datetime import datetime
-date_str = datetime.now().strftime("%d %b") # Format: 27 Feb
-supabase.table("pending_tasks").insert({
-    "user_id": user_nickname, 
-    "task_name": f"[{date_str}] {title.strip()} | {desc.strip()}", 
-    "status": "Pending"
-}).execute()
+                # Simpan Log Audit
+                supabase.table("audit_log").insert({"user_id": user_nickname, "score": f_score, "audit_report": res, "input_preview": st.session_state.initial_tasks[:100]}).execute()
+                
+                # Ekstraksi Action Items dengan Label Tanggal
                 action_section = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", res, re.DOTALL | re.IGNORECASE)
                 if action_section:
+                    date_str = datetime.now().strftime("%d %b")
                     tasks = re.findall(r"\*\*(.+?)\*\*[:\-]\s*(.+)", action_section.group(1))
                     for title, desc in tasks:
-                        supabase.table("pending_tasks").insert({"user_id": user_nickname, "task_name": f"{title.strip()} | {desc.strip()}", "status": "Pending"}).execute()
+                        supabase.table("pending_tasks").insert({
+                            "user_id": user_nickname, 
+                            "task_name": f"[{date_str}] {title.strip()} | {desc.strip()}", 
+                            "status": "Pending"
+                        }).execute()
                 st.session_state.data_saved = True; st.rerun()
 
             st.download_button("📥 Download PDF Laporan", data=generate_pdf(user_nickname, res, f_score), file_name=f"Audit_{user_nickname}.pdf")
