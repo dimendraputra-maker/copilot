@@ -142,7 +142,7 @@ else:
 page = st.tabs(["🔍 Sesi Audit", "📊 Dashboard"])
 
 with page[0]:
-    # --- BAGIAN YANG DIUBAH: HANYA INSTRUKSI TEKS ---
+    # --- BAGIAN YANG DIUBAH (HANYA INSTRUKSI) ---
     st.error("### ⚠️ PROTOKOL PENGGUNAAN & CARA KERJA SISTEM")
     
     col_inst1, col_inst2 = st.columns(2)
@@ -161,14 +161,13 @@ with page[0]:
         st.markdown("""
         **3. Validasi Bukti Visual**
         Gunakan fitur unggah foto di setiap tahap jika ada data chart, tabel Excel, atau screenshot operasional.
-        * **Cara Kerja**: Vision AI mengekstrak data mentah dari gambar sebagai fakta objektif untuk meminimalisir bias.
+        * **Cara Kerja**: Vision AI mengekstrak data mentah dari gambar sebagai 'fakta keras' untuk meminimalisir bias subjektif.
         
         **4. Blueprint & Checklist Otomatis**
         Di akhir sesi, sistem akan menghasilkan laporan PDF dan 'Action Items'.
         * **Cara Kerja**: Tugas yang muncul di Sidebar adalah hasil filter ketat dari solusi yang paling berdampak (*High-Leverage*).
         """)
     st.markdown("---")
-    # --- AKHIR PERUBAHAN INSTRUKSI ---
 
     # LOGIKA BERIKUTNYA TETAP SAMA PERSIS DENGAN KODE KAMU
     if st.session_state.audit_stage == 'input':
