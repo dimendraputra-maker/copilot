@@ -116,15 +116,25 @@ if st.session_state.current_user is None:
 user_nickname = st.session_state.current_user
 st.sidebar.title(f"👤 {user_nickname}")
 st.sidebar.markdown("### 📋 Pending Tasks")
-res_t = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").order("created_at", desc=True).execute()
-for t in res_tasks := res_t.data:
-    title = t['task_name'].split("|")[0].strip()
-    with st.sidebar.expander(f"📌 {title}"):
-        st.write(t['task_name'].split("|")[1] if "|" in t['task_name'] else "Eksekusi.")
-        if st.button("Selesaikan", key=f"btn_{t['id']}", use_container_width=True):
-            supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", t['id']).execute(); st.rerun()
 
-if st.sidebar.button("Keluar"): st.session_state.current_user = None; st.rerun()
+# Ambil data terlebih dahulu secara terpisah
+res_t = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").order("created_at", desc=True).execute()
+res_tasks_data = res_t.data
+
+if res_tasks_data:
+    for t in res_tasks_data:
+        # Pisahkan Judul dan Deskripsi
+        parts = t['task_name'].split("|")
+        title = parts[0].strip()
+        desc = parts[1].strip() if len(parts) > 1 else "Eksekusi segera."
+        
+        with st.sidebar.expander(f"📌 {title}"):
+            st.write(desc)
+            if st.button("Selesaikan", key=f"btn_{t['id']}", use_container_width=True):
+                supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", t['id']).execute()
+                st.rerun()
+else:
+    st.sidebar.info("Tidak ada tugas aktif.")
 
 # ==========================================
 # 5. AUDIT PAGE
