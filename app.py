@@ -223,7 +223,13 @@ with page[0]:
             f_score = float(score_match.group(1)) if score_match else 0.0
             
             if not st.session_state.data_saved:
-                supabase.table("audit_log").insert({"user_id": user_nickname, "score": f_score, "audit_report": res, "input_preview": st.session_state.initial_tasks[:100]}).execute()
+                from datetime import datetime
+date_str = datetime.now().strftime("%d %b") # Format: 27 Feb
+supabase.table("pending_tasks").insert({
+    "user_id": user_nickname, 
+    "task_name": f"[{date_str}] {title.strip()} | {desc.strip()}", 
+    "status": "Pending"
+}).execute()
                 action_section = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", res, re.DOTALL | re.IGNORECASE)
                 if action_section:
                     tasks = re.findall(r"\*\*(.+?)\*\*[:\-]\s*(.+)", action_section.group(1))
