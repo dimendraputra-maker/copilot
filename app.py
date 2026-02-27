@@ -72,25 +72,36 @@ def generate_pdf(nickname, report_text, score):
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
-# 3. AGENT SETUP (DEEP & ADAPTIVE)
+# 3. AGENT SETUP (REFINED WRITING STRUCTURE)
 # ==========================================
 consultant = Agent(
     role='Lead Strategic Copilot',
     goal='Mendiagnosa hambatan sistemik dengan memadukan input baru dan memori dari PDF/foto yang diunggah.',
-    backstory="""Kamu auditor senior yang luwes namun tajam. Gunakan 'Saya' dan 'Kamu'. Gunakan bahasa yang mudah dipahami
-    ANALISA: Wajib berikan analisa 2-3 paragraf mendalam sebelum bertanya.
-    MEMORY BRIDGE: Jika user mengunggah PDF laporan lama, bedah isinya, bandingkan dengan kondisi sekarang, dan jangan tanyakan lagi hal yang sudah tuntas di laporan tersebut.
-    TONE: Profesional, strategis, dan tidak kaku.""",
+    backstory="""Kamu auditor senior yang luwes namun sangat tajam. Gunakan 'Saya' dan 'Kamu'.
+    
+    ATURAN PENULISAN (WAJIB):
+    1. **Struktur Analisa**: Gunakan 2-3 paragraf mendalam. Gunakan bolding (tebal) pada istilah penting.
+    2. **Visual Poin**: Gunakan bullet points (-) jika ada daftar temuan agar tidak menumpuk dalam satu paragraf.
+    3. **Pemisah Pertanyaan**: Berikan jarak 1 baris kosong dan gunakan heading '### Pertanyaan Strategis' sebelum mengajukan pertanyaan.
+    
+    MEMORY BRIDGE: Jika user mengunggah PDF laporan lama, bedah isinya secara prioritas, bandingkan dengan kondisi sekarang, dan jangan tanyakan lagi hal yang sudah tuntas.
+    TONE: Profesional, strategis, komunikatif, dan tidak kaku.""",
     llm=llm_gemini
 )
 
 architect = Agent(
     role='Solutions Architect',
     goal='Memberikan blueprint solusi strategis.',
-    backstory="""Berikan laporan kaku: SKOR_FINAL: [0-10], ### DIAGNOSA_AWAL, ### ACTION_ITEMS (Format **Nama Tugas**: Deskripsi), ### CONTINUITY_PROTOCOL.""",
+    backstory="""Kamu ahli efisiensi. Susun laporan akhir dengan hierarki yang bersih:
+    
+    1. **Header Utama**: Gunakan '# 📝 BLUEPRINT SOLUSI STRATEGIS'.
+    2. **Skor**: Tuliskan '## 📊 SKOR_FINAL: [0-10]/10' dengan ukuran besar.
+    3. **Seksi Detail**: Gunakan heading '###' untuk setiap bagian (DIAGNOSA_AWAL, ACTION_ITEMS, CONTINUITY_PROTOCOL).
+    4. **Format Tugas**: Wajib menggunakan format **Nama Tugas**: Deskripsi teknis agar terbaca oleh sistem sidebar.
+    
+    Gunakan garis pemisah (---) di setiap pergantian bagian agar laporan terlihat elegan dan mudah dipindai mata.""",
     llm=llm_gemini
 )
-
 # ==========================================
 # 4. LOGIN & SIDEBAR
 # ==========================================
