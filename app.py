@@ -142,32 +142,34 @@ else:
 page = st.tabs(["🔍 Sesi Audit", "📊 Dashboard"])
 
 with page[0]:
-    # --- BAGIAN YANG DIUBAH (HANYA INSTRUKSI) ---
-    st.error("### ⚠️ PROTOKOL PENGGUNAAN & CARA KERJA SISTEM")
+    # --- INSTRUKSI DETAIL DALAM KOTAK KUNING ---
+    st.warning("### ⚠️ PANDUAN OPERASIONAL STRATEGIC COPILOT")
     
-    col_inst1, col_inst2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
-    with col_inst1:
+    with col1:
         st.markdown("""
-        **1. Input & Memory Bridge (Penting!)**
-        Sistem ini bekerja dengan logika *Context-First*. Jika ini adalah lanjutan dari audit sebelumnya, **Wajib** unggah PDF Laporan Audit terakhir.
-        * **Cara Kerja**: AI Vision akan membedah PDF tersebut, mengambil skor terakhir, dan memahami tugas mana yang belum selesai agar tidak terjadi pengulangan diagnosa.
-        
-        **2. Fase Interogasi Mendalam**
-        Kamu akan melewati 4 tahap pertanyaan. AI tidak hanya bertanya, tapi akan memberikan **Analisa Pola** terlebih dahulu.
+        **1. INPUT & MEMORY BRIDGE**
+        * Masukkan tantangan teknis atau rencana strategismu secara mendalam di kotak input.
+        * **Penting:** Jika ini lanjutan sesi sebelumnya, unggah **PDF Laporan Terakhir** agar AI mengenali konteks dan progres tugas yang sudah ada.
         """)
-
-    with col_inst2:
+        
+    with col2:
         st.markdown("""
-        **3. Validasi Bukti Visual**
-        Gunakan fitur unggah foto di setiap tahap jika ada data chart, tabel Excel, atau screenshot operasional.
-        * **Cara Kerja**: Vision AI mengekstrak data mentah dari gambar sebagai 'fakta keras' untuk meminimalisir bias subjektif.
-        
-        **4. Blueprint & Checklist Otomatis**
-        Di akhir sesi, sistem akan menghasilkan laporan PDF dan 'Action Items'.
-        * **Cara Kerja**: Tugas yang muncul di Sidebar adalah hasil filter ketat dari solusi yang paling berdampak (*High-Leverage*).
+        **2. INTEROGASI & VALIDASI**
+        * Jawab **4 tahap pertanyaan** investigasi dari AI Auditor untuk membongkar *blind spot*.
+        * Gunakan fitur **Upload Foto** di setiap tahap untuk melampirkan screenshot data atau bukti lapangan guna memperkuat akurasi analisa AI.
         """)
+        
+    with col3:
+        st.markdown("""
+        **3. OUTPUT & EKSEKUSI**
+        * Dapatkan **Skor Performa** dan **Blueprint Solusi** yang mencakup diagnosa serta langkah perbaikan.
+        * Cek **Sidebar (Action Items)**: Tugas baru akan otomatis muncul di sana untuk kamu eksekusi dan pantau progresnya.
+        """)
+    
     st.markdown("---")
+    # --- SELESAI INSTRUKSI ---
 
     # LOGIKA BERIKUTNYA TETAP SAMA PERSIS DENGAN KODE KAMU
     if st.session_state.audit_stage == 'input':
