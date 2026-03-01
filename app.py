@@ -164,30 +164,36 @@ st.sidebar.title(f"👤 {user_nickname}")
 st.sidebar.markdown("### 📋 Pending Tasks")
 
 # Load Tasks
-res_t = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").order("created_at", desc=True).execute()
-res_tasks_data = res_t.data
+try:
+    res_t = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").order("created_at", desc=True).execute()
+    res_tasks_data = res_t.data
 
-if res_tasks_data:
-    for t in res_tasks_data:
-        parts = t['task_name'].split("|")
-        title_with_date = parts[0].strip()
-        desc = parts[1].strip() if len(parts) > 1 else "Eksekusi segera."
-        
-        with st.sidebar.expander(f"📌 {title_with_date}"):
-            st.write(desc)
-            # Create two columns for Done and Delete buttons
-            c1, c2 = st.columns(2)
+    if res_tasks_data:
+        for t in res_tasks_data:
+            parts = t['task_name'].split("|")
+            title_with_date = parts[0].strip()
+            desc = parts[1].strip() if len(parts) > 1 else "Eksekusi segera."
+            
+            # DESAIN BARU: Tanpa Expander agar tombol 100% terlihat
+            st.sidebar.markdown(f"**📌 {title_with_date}**")
+            st.sidebar.caption(desc)
+            
+            c1, c2 = st.sidebar.columns(2)
             with c1:
-                if st.button("Selesaikan", key=f"done_{t['id']}", use_container_width=True):
+                if st.button("✅ Selesai", key=f"done_{t['id']}", use_container_width=True):
                     supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", t['id']).execute()
                     st.rerun()
             with c2:
-                # FUNGSI HAPUS: Menghapus data dari baris database
-                if st.button("Hapus", key=f"del_{t['id']}", use_container_width=True):
+                # FUNGSI HAPUS: Tombol akan langsung terlihat di bawah setiap tugas
+                if st.button("🗑️ Hapus", key=f"del_{t['id']}", use_container_width=True):
                     supabase.table("pending_tasks").delete().eq("id", t['id']).execute()
                     st.rerun()
-else:
-    st.sidebar.info("Tidak ada tugas aktif.")
+            st.sidebar.markdown("---") # Garis pemisah antar tugas
+    else:
+        st.sidebar.info("Tidak ada tugas aktif.")
+except KeyError as e:
+    st.sidebar.error(f"Error Database: Kolom {e} tidak ditemukan di tabel Supabase!")
+
 # ==========================================
 # 5. AUDIT PAGE
 # ==========================================
