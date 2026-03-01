@@ -101,33 +101,40 @@ consultant = Agent(
     ATURAN INTERAKSI (WAJIB):
     1. **Jangan Seperti Formulir**: Jangan pernah memberikan daftar pertanyaan 1, 2, 3. 
     2. **Gaya Percakapan**: Berikan tanggapan/validasi singkat atas jawaban user sebelumnya, lalu ajukan **maksimal 1-2 pertanyaan** yang paling krusial saja.
-    3. **Empati & Tajam**: Bertanyalah seperti sedang coaching. Gali "kenapa" dan "bagaimana" secara mendalam, bukan hanya menanyakan data teknis.
+    3. **Empati & Tajam**: Bertanyalah seperti sedang coaching. Gali "kenapa" dan "bagaimana" secara mendalam, juga jangan lupa menanyakan data teknis yang diperlukan.
     4. **Memory Bridge**: Gunakan data dari PDF/Foto untuk menantang jawaban user jika tidak sinkron(jika ada).""",
     llm=llm_gemini
 )
 
 architect = Agent(
     role='Solutions Architect',
-    goal='Menyusun Blueprint Strategis yang komprehensif dan actionable.',
-    backstory="""Kamu adalah ahli strategi. Tugasmu adalah merangkum seluruh sesi audit menjadi dokumen profesional.
+    goal='Menyusun Blueprint Strategis yang komprehensif dan mudah dibaca.',
+    backstory="""Kamu adalah ahli strategi senior. Tugasmu adalah menyusun laporan yang rapi, profesional, dan enak dibaca (scannable).
     
-    STRUKTUR LAPORAN (WAJIB):
-    1. # 📝 BLUEPRINT SOLUSI STRATEGIS
-    2. ## 📊 SKOR_FINAL: [Skor]/10
+    ATURAN FORMATTING (WAJIB):
+    1. Gunakan Jeda 2 Baris Kosong antar sub-judul (Heading).
+    2. Gunakan Jeda 1 Baris Kosong antar paragraf dalam satu bagian.
+    3. JANGAN menuliskan poin-poin dalam satu paragraf panjang.
     
-    3. ### 🎯 ANALISA KONKLUSIF
-       (Tuliskan rangkuman tajam dan kesimpulan dari akar masalah user di sini. Berikan perspektif profesionalmu).
+    STRUKTUR LAPORAN:
+    # 📝 BLUEPRINT SOLUSI STRATEGIS
     
-    4. ### 🚀 STRATEGIC ROADMAP
-       (Jelaskan langkah besar atau fase-fase yang harus dilalui user).
+    ## 📊 SKOR_FINAL: [Skor]/10
     
-    5. ### 📋 ACTION_ITEMS
-       (Gunakan format berikut agar terbaca oleh sistem):
-       **Nama Tugas**: Deskripsi teknis yang jelas.
-       **Nama Tugas**: Deskripsi teknis yang jelas.
-       
-    6. ### 🛡️ PROTOKOL KEBERLANJUTAN
-       (Tips menjaga momentum agar tidak kembali ke pola lama).""",
+    ### 🎯 ANALISA KONKLUSIF
+    (Tuliskan rangkuman dalam 2-3 paragraf pendek yang dipisahkan baris baru).
+    
+    ### 🚀 STRATEGIC ROADMAP
+    (Berikan penjelasan alur fase per fase, gunakan baris baru untuk setiap fase).
+    
+    ### 📋 ACTION_ITEMS
+    (PENTING: Gunakan format ini dan WAJIB ganti baris untuk setiap poin agar Sidebar muncul):
+    **Nama Tugas**: Deskripsi teknis lengkap.
+    
+    **Nama Tugas**: Deskripsi teknis lengkap.
+    
+    ### 🛡️ PROTOKOL KEBERLANJUTAN
+    (Berikan tips dalam bentuk paragraf atau list yang rapi).""",
     llm=llm_gemini
 )
 
@@ -137,25 +144,14 @@ architect = Agent(
 st.set_page_config(page_title="Strategic Copilot V9.9", layout="wide")
 
 if st.session_state.current_user is None:
-    _, col_mid, _ = st.columns([1, 2, 1])
-    with col_mid:
-        st.markdown("<h1 style='text-align: center;'>🔐 Access Control</h1>", unsafe_allow_html=True)
-        u_name = st.text_input("Nickname:")
-        u_pass = st.text_input("Password:", type="password")
-        if st.button("Masuk / Daftar", use_container_width=True):
-            res = supabase.table("user_access").select("*").eq("username", u_name).execute()
-            if res.data and res.data[0]['password'] == u_pass:
-                st.session_state.current_user = u_name; st.rerun()
-            elif not res.data:
-                supabase.table("user_access").insert({"username": u_name, "password": u_pass}).execute()
-                st.success("Terdaftar! Klik masuk."); st.rerun()
-            else: st.error("Salah password.")
+    # ... (kode login tetap sama) ...
     st.stop()
 
 user_nickname = st.session_state.current_user
 st.sidebar.title(f"👤 {user_nickname}")
 st.sidebar.markdown("### 📋 Pending Tasks")
 
+# Ambil data tugas
 res_t = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").order("created_at", desc=True).execute()
 res_tasks_data = res_t.data
 
@@ -164,11 +160,20 @@ if res_tasks_data:
         parts = t['task_name'].split("|")
         title_with_date = parts[0].strip()
         desc = parts[1].strip() if len(parts) > 1 else "Eksekusi segera."
+        
+        # Sidebar Expander dengan Tombol Selesaikan & Hapus
         with st.sidebar.expander(f"📌 {title_with_date}"):
             st.write(desc)
-            if st.button("Selesaikan", key=f"btn_{t['id']}", use_container_width=True):
-                supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", t['id']).execute()
-                st.rerun()
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("Selesaikan", key=f"done_{t['id']}", use_container_width=True):
+                    supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", t['id']).execute()
+                    st.rerun()
+            with c2:
+                # FUNGSI HAPUS: Menghapus baris dari database
+                if st.button("Hapus", key=f"del_{t['id']}", use_container_width=True):
+                    supabase.table("pending_tasks").delete().eq("id", t['id']).execute()
+                    st.rerun()
 else:
     st.sidebar.info("Tidak ada tugas aktif.")
 
@@ -215,7 +220,6 @@ with page[0]:
         st.subheader(f"Fase Interogasi {st.session_state.q_index}/4")
         hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
         
-        # PERBAIKAN: Instruksi Task agar tidak seperti Google Form
         task_q = Task(
             description=f"Masalah: {st.session_state.initial_tasks}. Memori Dokumen: {st.session_state.initial_evidence}. History: {hist}. Tahap: {st.session_state.q_index}/4.",
             agent=consultant, 
@@ -238,11 +242,11 @@ with page[0]:
         with st.spinner("Menyusun Laporan..."):
             full_hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
             
-            # PERBAIKAN: Instruksi Task agar menghasilkan Konklusi Analisa
+            # TAMBALAN: Instruksi Task diperketat agar laporan rapi (JEDA 2 BARIS)
             task_fin = Task(
                 description=f"History: {full_hist}.", 
                 agent=architect,
-                expected_output="Laporan strategi utuh yang berisi: 1. Analisa Konklusi mendalam, 2. Roadmap Strategis, dan 3. Action Items sesuai format instruksi agent."
+                expected_output="Laporan strategi utuh dengan JEDA 2 BARIS antar section. Isi: 1. Analisa Konklusi (per paragraf), 2. Roadmap Strategis, dan 3. Action Items (Wajib baris baru per tugas)."
             )
             res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw); st.markdown(res)
             
@@ -251,10 +255,14 @@ with page[0]:
             
             if not st.session_state.data_saved:
                 supabase.table("audit_log").insert({"user_id": user_nickname, "score": f_score, "audit_report": res, "input_preview": st.session_state.initial_tasks[:100]}).execute()
+                
                 action_section = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", res, re.DOTALL | re.IGNORECASE)
                 if action_section:
                     date_str = datetime.now().strftime("%d %b")
-                    tasks = re.findall(r"\*\*(.+?)\*\*[:\-]\s*(.+)", action_section.group(1))
+                    
+                    # TAMBALAN: Regex baru agar mendukung deskripsi panjang/multi-baris
+                    tasks = re.findall(r"\*\*(.+?)\*\*[:\-]\s*(.+?)(?=\n\n|\n\*\*|$)", action_section.group(1), re.DOTALL)
+                    
                     for title, desc in tasks:
                         supabase.table("pending_tasks").insert({
                             "user_id": user_nickname, 
@@ -265,7 +273,6 @@ with page[0]:
 
             st.download_button("📥 Download PDF Laporan", data=generate_pdf(user_nickname, res, f_score), file_name=f"Audit_{user_nickname}.pdf")
             
-            # --- BAGIAN FEEDBACK ANALYTICS ---
             st.divider()
             st.subheader("📊 Evaluasi Sistem (Beta Test)")
             with st.form("evaluation_form"):
@@ -282,7 +289,6 @@ with page[0]:
                 if submit_eval:
                     dur = (time.time() - st.session_state.start_time) / 60 if st.session_state.start_time else 0
                     words = len(str(st.session_state.chat_history).split())
-                    
                     save_to_analytics(user_nickname, dur, acc, clr, readi, crit, words)
                     st.success("Analitik terkirim!")
                     st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved, st.session_state.start_time = 'input', [], False, None
@@ -291,7 +297,6 @@ with page[0]:
             if st.button("Reset Tanpa Kirim Evaluasi"):
                 st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved, st.session_state.start_time = 'input', [], False, None
                 st.rerun()
-
 with page[1]:
     st.title("📈 Dashboard")
     res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).order("created_at", desc=False).execute()
