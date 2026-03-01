@@ -144,14 +144,26 @@ architect = Agent(
 st.set_page_config(page_title="Strategic Copilot V9.9", layout="wide")
 
 if st.session_state.current_user is None:
-    # ... (kode login tetap sama) ...
+    _, col_mid, _ = st.columns([1, 2, 1])
+    with col_mid:
+        st.markdown("<h1 style='text-align: center;'>🔐 Access Control</h1>", unsafe_allow_html=True)
+        u_name = st.text_input("Nickname:")
+        u_pass = st.text_input("Password:", type="password")
+        if st.button("Masuk / Daftar", use_container_width=True):
+            res = supabase.table("user_access").select("*").eq("username", u_name).execute()
+            if res.data and res.data[0]['password'] == u_pass:
+                st.session_state.current_user = u_name; st.rerun()
+            elif not res.data:
+                supabase.table("user_access").insert({"username": u_name, "password": u_pass}).execute()
+                st.success("Terdaftar! Klik masuk."); st.rerun()
+            else: st.error("Salah password.")
     st.stop()
 
 user_nickname = st.session_state.current_user
 st.sidebar.title(f"👤 {user_nickname}")
 st.sidebar.markdown("### 📋 Pending Tasks")
 
-# Ambil data tugas
+# Load Tasks
 res_t = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("status", "Pending").order("created_at", desc=True).execute()
 res_tasks_data = res_t.data
 
@@ -161,22 +173,21 @@ if res_tasks_data:
         title_with_date = parts[0].strip()
         desc = parts[1].strip() if len(parts) > 1 else "Eksekusi segera."
         
-        # Sidebar Expander dengan Tombol Selesaikan & Hapus
         with st.sidebar.expander(f"📌 {title_with_date}"):
             st.write(desc)
+            # Create two columns for Done and Delete buttons
             c1, c2 = st.columns(2)
             with c1:
                 if st.button("Selesaikan", key=f"done_{t['id']}", use_container_width=True):
                     supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", t['id']).execute()
                     st.rerun()
             with c2:
-                # FUNGSI HAPUS: Menghapus baris dari database
+                # FUNGSI HAPUS: Menghapus data dari baris database
                 if st.button("Hapus", key=f"del_{t['id']}", use_container_width=True):
                     supabase.table("pending_tasks").delete().eq("id", t['id']).execute()
                     st.rerun()
 else:
     st.sidebar.info("Tidak ada tugas aktif.")
-
 # ==========================================
 # 5. AUDIT PAGE
 # ==========================================
