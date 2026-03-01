@@ -1,6 +1,7 @@
 import os
 import warnings
 import re
+import time # Tambahan untuk tracking durasi
 from datetime import datetime
 from PIL import Image
 
@@ -35,20 +36,38 @@ llm_gemini = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.2)
 vision_model = genai.GenerativeModel('gemini-2.0-flash')
 
 # ==========================================
-# 2. CORE FUNCTIONS (VISION & PDF)
+# 2. CORE FUNCTIONS (VISION, PDF, & ANALYTICS)
 # ==========================================
 def init_state():
     defaults = {
         'audit_stage': 'input', 'q_index': 0, 'chat_history': [],
-        'initial_tasks': "", 'initial_evidence': "", 'data_saved': False, 'current_user': None
+        'initial_tasks': "", 'initial_evidence': "", 'data_saved': False, 
+        'current_user': None, 'start_time': None # Tambahan start_time
     }
     for k, v in defaults.items():
         if k not in st.session_state: st.session_state[k] = v
 
 init_state()
 
+# Fungsi baru untuk simpan analitik ke Supabase
+def save_to_analytics(nickname, duration, accuracy, clarity, readiness, critique, word_count):
+    try:
+        data = {
+            "user_nickname": nickname,
+            "time_spent": float(duration),
+            "ai_accuracy": int(accuracy),
+            "clarity_score": int(clarity),
+            "action_readiness": int(readiness),
+            "critique": str(critique),
+            "word_count_input": int(word_count)
+        }
+        supabase.table("audit_analytics").insert(data).execute()
+        return True
+    except Exception as e:
+        st.error(f"Gagal mencatat data: {e}")
+        return False
+
 def process_vision(files):
-    """Membaca screenshot data atau PDF laporan audit lama sebagai memori."""
     if not files: return ""
     descriptions = []
     for f in files:
@@ -72,7 +91,7 @@ def generate_pdf(nickname, report_text, score):
     return pdf.output(dest='S').encode('latin-1')
 
 # ==========================================
-# 3. AGENT SETUP (REFINED WRITING STRUCTURE)
+# 3. AGENT SETUP
 # ==========================================
 consultant = Agent(
     role='Lead Strategic Copilot',
@@ -124,7 +143,6 @@ if st.session_state.current_user is None:
             else: st.error("Salah password.")
     st.stop()
 
-# Sidebar Checklist
 user_nickname = st.session_state.current_user
 st.sidebar.title(f"👤 {user_nickname}")
 st.sidebar.markdown("### 📋 Pending Tasks")
@@ -137,7 +155,6 @@ if res_tasks_data:
         parts = t['task_name'].split("|")
         title_with_date = parts[0].strip()
         desc = parts[1].strip() if len(parts) > 1 else "Eksekusi segera."
-        
         with st.sidebar.expander(f"📌 {title_with_date}"):
             st.write(desc)
             if st.button("Selesaikan", key=f"btn_{t['id']}", use_container_width=True):
@@ -180,6 +197,7 @@ with page[0]:
         u_f = st.file_uploader("Upload Foto/PDF Laporan Lama (Memory Bridge)", accept_multiple_files=True)
         if st.button("Mulai Sesi"):
             if len(u_in) > 10:
+                st.session_state.start_time = time.time() # Mulai catat waktu
                 st.session_state.initial_evidence = process_vision(u_f)
                 st.session_state.initial_tasks = u_in
                 st.session_state.audit_stage, st.session_state.q_index = 'interrogation', 1; st.rerun()
@@ -215,10 +233,7 @@ with page[0]:
             f_score = float(score_match.group(1)) if score_match else 0.0
             
             if not st.session_state.data_saved:
-                # Simpan Log Audit
                 supabase.table("audit_log").insert({"user_id": user_nickname, "score": f_score, "audit_report": res, "input_preview": st.session_state.initial_tasks[:100]}).execute()
-                
-                # Ekstraksi Action Items dengan Label Tanggal
                 action_section = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", res, re.DOTALL | re.IGNORECASE)
                 if action_section:
                     date_str = datetime.now().strftime("%d %b")
@@ -232,8 +247,34 @@ with page[0]:
                 st.session_state.data_saved = True; st.rerun()
 
             st.download_button("📥 Download PDF Laporan", data=generate_pdf(user_nickname, res, f_score), file_name=f"Audit_{user_nickname}.pdf")
-            if st.button("Selesai & Reset"):
-                st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved = 'input', [], False; st.rerun()
+            
+            # --- BAGIAN FEEDBACK ANALYTICS (TAMBAHAN UNTUK TESTING) ---
+            st.divider()
+            st.subheader("📊 Evaluasi Sistem (Beta Test)")
+            with st.form("evaluation_form"):
+                col_a, col_b = st.columns(2)
+                with col_a:
+                    acc = st.select_slider("Akurasi Diagnosa AI (1-5):", options=[1, 2, 3, 4, 5], value=4)
+                    clr = st.select_slider("Kejelasan Instruksi (1-5):", options=[1, 2, 3, 4, 5], value=4)
+                with col_b:
+                    readi = st.radio("Kesiapan Eksekusi:", [1, 2, 3, 4, 5], help="1: Bingung, 5: Sangat Paham")
+                
+                crit = st.text_area("Masukan/Kritik:", placeholder="Apa yang perlu diperbaiki?")
+                submit_eval = st.form_submit_button("Kirim Evaluasi & Reset")
+
+                if submit_eval:
+                    # Hitung durasi & kata
+                    dur = (time.time() - st.session_state.start_time) / 60 if st.session_state.start_time else 0
+                    words = len(str(st.session_state.chat_history).split())
+                    
+                    save_to_analytics(user_nickname, dur, acc, clr, readi, crit, words)
+                    st.success("Analitik terkirim!")
+                    st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved, st.session_state.start_time = 'input', [], False, None
+                    st.rerun()
+
+            if st.button("Reset Tanpa Kirim Evaluasi"):
+                st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved, st.session_state.start_time = 'input', [], False, None
+                st.rerun()
 
 with page[1]:
     st.title("📈 Dashboard")
