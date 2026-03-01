@@ -1,17 +1,9 @@
 import os
 import warnings
 import re
-import time # Tambahan untuk tracking durasi
+import time 
 from datetime import datetime
 from PIL import Image
-
-# ==========================================
-# 0. KONFIGURASI SISTEM
-# ==========================================
-os.environ["OTEL_SDK_DISABLED"] = "true"
-os.environ["CREWAI_TELEMETRY_OUT_OUT"] = "true"
-warnings.filterwarnings("ignore", category=FutureWarning)
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -20,6 +12,13 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 import google.generativeai as genai
 from supabase import create_client, Client 
 from fpdf import FPDF
+
+# ==========================================
+# 0. KONFIGURASI SISTEM
+# ==========================================
+os.environ["OTEL_SDK_DISABLED"] = "true"
+os.environ["CREWAI_TELEMETRY_OUT_OUT"] = "true"
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 # ==========================================
 # 1. API & DATABASE
@@ -42,24 +41,20 @@ def init_state():
     defaults = {
         'audit_stage': 'input', 'q_index': 0, 'chat_history': [],
         'initial_tasks': "", 'initial_evidence': "", 'data_saved': False, 
-        'current_user': None, 'start_time': None # Tambahan start_time
+        'current_user': None, 'start_time': None,
+        'report_cache': "", 'score_cache': 0.0 # PERBAIKAN: Cache agar AI tidak kerja 2x saat rerun
     }
     for k, v in defaults.items():
         if k not in st.session_state: st.session_state[k] = v
 
 init_state()
 
-# Fungsi baru untuk simpan analitik ke Supabase
 def save_to_analytics(nickname, duration, accuracy, clarity, readiness, critique, word_count):
     try:
         data = {
-            "user_nickname": nickname,
-            "time_spent": float(duration),
-            "ai_accuracy": int(accuracy),
-            "clarity_score": int(clarity),
-            "action_readiness": int(readiness),
-            "critique": str(critique),
-            "word_count_input": int(word_count)
+            "user_nickname": nickname, "time_spent": float(duration), "ai_accuracy": int(accuracy),
+            "clarity_score": int(clarity), "action_readiness": int(readiness),
+            "critique": str(critique), "word_count_input": int(word_count)
         }
         supabase.table("audit_analytics").insert(data).execute()
         return True
@@ -168,7 +163,6 @@ res_t = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname)
 res_tasks_data = res_t.data
 
 if res_tasks_data:
-    # 1. Menampilkan tugas sesuai desain awal kamu (menggunakan expander/panah)
     for t in res_tasks_data:
         parts = t['task_name'].split("|")
         title_with_date = parts[0].strip()
@@ -180,13 +174,10 @@ if res_tasks_data:
                 supabase.table("pending_tasks").update({"status": "Completed"}).eq("id", t['id']).execute()
                 st.rerun()
     
-    # 2. FITUR BARU: Tombol Hapus Semua di bagian bawah daftar tugas
     st.sidebar.markdown("---")
     if st.sidebar.button("🗑️ Hapus Semua Tugas", type="primary", use_container_width=True):
-        # Perintah ini menghapus SEMUA tugas yang berstatus Pending milik user tersebut
         supabase.table("pending_tasks").delete().eq("user_id", user_nickname).eq("status", "Pending").execute()
         st.rerun()
-
 else:
     st.sidebar.info("Tidak ada tugas aktif.")
 
@@ -224,7 +215,7 @@ with page[0]:
         u_f = st.file_uploader("Upload Foto/PDF Laporan Lama (Memory Bridge)", accept_multiple_files=True)
         if st.button("Mulai Sesi"):
             if len(u_in) > 10:
-                st.session_state.start_time = time.time() # Mulai catat waktu
+                st.session_state.start_time = time.time()
                 st.session_state.initial_evidence = process_vision(u_f)
                 st.session_state.initial_tasks = u_in
                 st.session_state.audit_stage, st.session_state.q_index = 'interrogation', 1; st.rerun()
@@ -252,72 +243,85 @@ with page[0]:
             st.rerun()
 
     elif st.session_state.audit_stage == 'report':
-        with st.spinner("Menyusun Laporan..."):
-            full_hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
-            
-            # TAMBALAN: Instruksi Task diperketat agar laporan rapi (JEDA 2 BARIS)
-            task_fin = Task(
-                description=f"History: {full_hist}.", 
-                agent=architect,
-                expected_output="Laporan strategi utuh dengan JEDA 2 BARIS antar section. Isi: 1. Analisa Konklusi (per paragraf), 2. Roadmap Strategis, dan 3. Action Items (Wajib baris baru per tugas)."
-            )
-            res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw); st.markdown(res)
-            
-            score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", res, re.IGNORECASE)
-            f_score = float(score_match.group(1)) if score_match else 0.0
-            
-            if not st.session_state.data_saved:
+        # PERBAIKAN: Hanya render AI jika data belum tersimpan
+        if not st.session_state.data_saved:
+            with st.spinner("Menyusun Laporan & Mengamankan Data..."):
+                full_hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
+                
+                task_fin = Task(
+                    description=f"History: {full_hist}.", 
+                    agent=architect,
+                    expected_output="Laporan strategi utuh dengan JEDA 2 BARIS antar section. Isi: 1. Analisa Konklusi (per paragraf), 2. Roadmap Strategis, dan 3. Action Items (Wajib baris baru per tugas)."
+                )
+                res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
+                
+                score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", res, re.IGNORECASE)
+                f_score = float(score_match.group(1)) if score_match else 0.0
+                
+                # 1. Simpan Laporan ke Database
                 supabase.table("audit_log").insert({"user_id": user_nickname, "score": f_score, "audit_report": res, "input_preview": st.session_state.initial_tasks[:100]}).execute()
                 
-                # REGEX PALING EFEKTIF: Cari ACTION_ITEMS tanpa peduli simbol ###
+                # 2. Proses Action Items dengan Regex Paling Fleksibel
                 action_section = re.search(r"ACTION_ITEMS\s*\n?(.*?)($|###|🛡️)", res, re.DOTALL | re.IGNORECASE)
                 
                 if action_section:
                     date_str = datetime.now().strftime("%d %b")
                     content = action_section.group(1).strip()
                     
-                    # REGEX FLEKSIBEL: Tangkap format 'Judul: Deskripsi' pakai bintang maupun tidak
                     tasks = re.findall(r"(?:\n|^)(?:\* )?(?:\*\*)?(.+?)(?:\*\*)?[:\-]\s*(.+?)(?=\n(?:\* )?(?:\*\*)?[A-Z]|\n\n|$)", content, re.DOTALL)
                     
                     for title, desc in tasks:
                         clean_title = title.replace("**", "").replace("-", "").strip()
                         clean_desc = desc.replace("**", "").strip()
                         
-                        # Validasi: Masukkan jika judul lebih dari 3 huruf dan bukan emoji pelindung
                         if len(clean_title) > 3 and "🛡️" not in clean_title:
                             supabase.table("pending_tasks").insert({
                                 "user_id": user_nickname, 
                                 "task_name": f"[{date_str}] {clean_title} | {clean_desc}", 
                                 "status": "Pending"
                             }).execute()
-                st.session_state.data_saved = True; st.rerun()
-
-            st.download_button("📥 Download PDF Laporan", data=generate_pdf(user_nickname, res, f_score), file_name=f"Audit_{user_nickname}.pdf")
-            
-            st.divider()
-            st.subheader("📊 Evaluasi Sistem (Beta Test)")
-            with st.form("evaluation_form"):
-                col_a, col_b = st.columns(2)
-                with col_a:
-                    acc = st.select_slider("Akurasi Diagnosa AI (1-5):", options=[1, 2, 3, 4, 5], value=4)
-                    clr = st.select_slider("Kejelasan Instruksi (1-5):", options=[1, 2, 3, 4, 5], value=4)
-                with col_b:
-                    readi = st.radio("Kesiapan Eksekusi:", [1, 2, 3, 4, 5], help="1: Bingung, 5: Sangat Paham")
                 
-                crit = st.text_area("Masukan/Kritik:", placeholder="Apa yang perlu diperbaiki?")
-                submit_eval = st.form_submit_button("Kirim Evaluasi & Reset")
-
-                if submit_eval:
-                    dur = (time.time() - st.session_state.start_time) / 60 if st.session_state.start_time else 0
-                    words = len(str(st.session_state.chat_history).split())
-                    save_to_analytics(user_nickname, dur, acc, clr, readi, crit, words)
-                    st.success("Analitik terkirim!")
-                    st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved, st.session_state.start_time = 'input', [], False, None
-                    st.rerun()
-
-            if st.button("Reset Tanpa Kirim Evaluasi"):
-                st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved, st.session_state.start_time = 'input', [], False, None
+                # 3. Simpan di Session State lalu RERUN agar Sidebar muncul INSTAN
+                st.session_state.report_cache = res
+                st.session_state.score_cache = f_score
+                st.session_state.data_saved = True
                 st.rerun()
+
+        # Render Laporan dari Cache setelah Rerun
+        st.markdown(st.session_state.report_cache)
+        f_score = st.session_state.score_cache
+
+        st.download_button("📥 Download PDF Laporan", data=generate_pdf(user_nickname, st.session_state.report_cache, f_score), file_name=f"Audit_{user_nickname}.pdf")
+        
+        st.divider()
+        st.subheader("📊 Evaluasi Sistem (Beta Test)")
+        with st.form("evaluation_form"):
+            col_a, col_b = st.columns(2)
+            with col_a:
+                acc = st.select_slider("Akurasi Diagnosa AI (1-5):", options=[1, 2, 3, 4, 5], value=4)
+                clr = st.select_slider("Kejelasan Instruksi (1-5):", options=[1, 2, 3, 4, 5], value=4)
+            with col_b:
+                readi = st.radio("Kesiapan Eksekusi:", [1, 2, 3, 4, 5], help="1: Bingung, 5: Sangat Paham")
+            
+            crit = st.text_area("Masukan/Kritik:", placeholder="Apa yang perlu diperbaiki?")
+            submit_eval = st.form_submit_button("Kirim Evaluasi & Reset")
+
+            if submit_eval:
+                dur = (time.time() - st.session_state.start_time) / 60 if st.session_state.start_time else 0
+                words = len(str(st.session_state.chat_history).split())
+                save_to_analytics(user_nickname, dur, acc, clr, readi, crit, words)
+                st.success("Analitik terkirim!")
+                
+                # Bersihkan State untuk Sesi Baru
+                st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved = 'input', [], False
+                st.session_state.start_time, st.session_state.report_cache, st.session_state.score_cache = None, "", 0.0
+                st.rerun()
+
+        if st.button("Reset Tanpa Kirim Evaluasi"):
+            st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved = 'input', [], False
+            st.session_state.start_time, st.session_state.report_cache, st.session_state.score_cache = None, "", 0.0
+            st.rerun()
+
 with page[1]:
     st.title("📈 Dashboard")
     res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).order("created_at", desc=False).execute()
