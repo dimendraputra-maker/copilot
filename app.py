@@ -95,30 +95,39 @@ def generate_pdf(nickname, report_text, score):
 # ==========================================
 consultant = Agent(
     role='Lead Strategic Copilot',
-    goal='Mendiagnosa hambatan sistemik dengan memadukan input baru dan memori dari PDF/foto yang diunggah.',
-    backstory="""Kamu auditor senior yang luwes namun sangat tajam. Gunakan 'Saya' dan 'Kamu'.
+    goal='Mendiagnosa hambatan sistemik dengan gaya percakapan konsultan senior.',
+    backstory="""Kamu adalah konsultan bisnis papan atas. Gunakan 'Saya' dan 'Kamu'.
     
-    ATURAN PENULISAN (WAJIB):
-    1. **Struktur Analisa**: Gunakan 2-3 paragraf mendalam. Gunakan bolding (tebal) pada istilah penting.
-    2. **Visual Poin**: Gunakan bullet points (-) jika ada daftar temuan agar tidak menumpuk dalam satu paragraf.
-    3. **Pemisah Pertanyaan**: Berikan jarak 1 baris kosong dan gunakan heading '### Pertanyaan Strategis' sebelum mengajukan pertanyaan.
-    
-    MEMORY BRIDGE: Jika user mengunggah PDF laporan lama, bedah isinya secara prioritas, bandingkan dengan kondisi sekarang, dan jangan tanyakan lagi hal yang sudah tuntas.
-    TONE: Profesional, strategis, komunikatif, dan tidak kaku.""",
+    ATURAN INTERAKSI (WAJIB):
+    1. **Jangan Seperti Formulir**: Jangan pernah memberikan daftar pertanyaan 1, 2, 3. 
+    2. **Gaya Percakapan**: Berikan tanggapan/validasi singkat atas jawaban user sebelumnya, lalu ajukan **maksimal 1-2 pertanyaan** yang paling krusial saja.
+    3. **Empati & Tajam**: Bertanyalah seperti sedang coaching. Gali "kenapa" dan "bagaimana" secara mendalam, bukan hanya menanyakan data teknis.
+    4. **Memory Bridge**: Gunakan data dari PDF/Foto untuk menantang jawaban user jika tidak sinkron(jika ada).""",
     llm=llm_gemini
 )
 
 architect = Agent(
     role='Solutions Architect',
-    goal='Memberikan blueprint solusi strategis.',
-    backstory="""Kamu ahli efisiensi. Susun laporan akhir dengan hierarki yang bersih:
+    goal='Menyusun Blueprint Strategis yang komprehensif dan actionable.',
+    backstory="""Kamu adalah ahli strategi. Tugasmu adalah merangkum seluruh sesi audit menjadi dokumen profesional.
     
-    1. **Header Utama**: Gunakan '# 📝 BLUEPRINT SOLUSI STRATEGIS'.
-    2. **Skor**: Tuliskan '## 📊 SKOR_FINAL: [0-10]/10' dengan ukuran besar.
-    3. **Seksi Detail**: Gunakan heading '###' untuk setiap bagian (DIAGNOSA_AWAL, ACTION_ITEMS, CONTINUITY_PROTOCOL).
-    4. **Format Tugas**: Wajib menggunakan format **Nama Tugas**: Deskripsi teknis agar terbaca oleh sistem sidebar.
+    STRUKTUR LAPORAN (WAJIB):
+    1. # 📝 BLUEPRINT SOLUSI STRATEGIS
+    2. ## 📊 SKOR_FINAL: [Skor]/10
     
-    Gunakan garis pemisah (---) di setiap pergantian bagian agar laporan terlihat elegan dan mudah dipindai mata.""",
+    3. ### 🎯 ANALISA KONKLUSIF
+       (Tuliskan rangkuman tajam dan kesimpulan dari akar masalah user di sini. Berikan perspektif profesionalmu).
+    
+    4. ### 🚀 STRATEGIC ROADMAP
+       (Jelaskan langkah besar atau fase-fase yang harus dilalui user).
+    
+    5. ### 📋 ACTION_ITEMS
+       (Gunakan format berikut agar terbaca oleh sistem):
+       **Nama Tugas**: Deskripsi teknis yang jelas.
+       **Nama Tugas**: Deskripsi teknis yang jelas.
+       
+    6. ### 🛡️ PROTOKOL KEBERLANJUTAN
+       (Tips menjaga momentum agar tidak kembali ke pola lama).""",
     llm=llm_gemini
 )
 
@@ -206,9 +215,11 @@ with page[0]:
         st.subheader(f"Fase Interogasi {st.session_state.q_index}/4")
         hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
         
+        # PERBAIKAN: Instruksi Task agar tidak seperti Google Form
         task_q = Task(
             description=f"Masalah: {st.session_state.initial_tasks}. Memori Dokumen: {st.session_state.initial_evidence}. History: {hist}. Tahap: {st.session_state.q_index}/4.",
-            agent=consultant, expected_output="Analisa mendalam (2-3 paragraf) dan pertanyaan baru."
+            agent=consultant, 
+            expected_output="Respon percakapan satu arah yang berisi validasi jawaban sebelumnya dan maksimal 1-2 pertanyaan lanjutan yang tajam (Tanpa daftar angka/list)."
         )
         with st.spinner("Menganalisa..."):
             current_q = str(Crew(agents=[consultant], tasks=[task_q]).kickoff().raw)
@@ -226,7 +237,13 @@ with page[0]:
     elif st.session_state.audit_stage == 'report':
         with st.spinner("Menyusun Laporan..."):
             full_hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
-            task_fin = Task(description=f"History: {full_hist}.", agent=architect, expected_output="Blueprint solusi.")
+            
+            # PERBAIKAN: Instruksi Task agar menghasilkan Konklusi Analisa
+            task_fin = Task(
+                description=f"History: {full_hist}.", 
+                agent=architect,
+                expected_output="Laporan strategi utuh yang berisi: 1. Analisa Konklusi mendalam, 2. Roadmap Strategis, dan 3. Action Items sesuai format instruksi agent."
+            )
             res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw); st.markdown(res)
             
             score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", res, re.IGNORECASE)
@@ -248,7 +265,7 @@ with page[0]:
 
             st.download_button("📥 Download PDF Laporan", data=generate_pdf(user_nickname, res, f_score), file_name=f"Audit_{user_nickname}.pdf")
             
-            # --- BAGIAN FEEDBACK ANALYTICS (TAMBAHAN UNTUK TESTING) ---
+            # --- BAGIAN FEEDBACK ANALYTICS ---
             st.divider()
             st.subheader("📊 Evaluasi Sistem (Beta Test)")
             with st.form("evaluation_form"):
@@ -263,7 +280,6 @@ with page[0]:
                 submit_eval = st.form_submit_button("Kirim Evaluasi & Reset")
 
                 if submit_eval:
-                    # Hitung durasi & kata
                     dur = (time.time() - st.session_state.start_time) / 60 if st.session_state.start_time else 0
                     words = len(str(st.session_state.chat_history).split())
                     
