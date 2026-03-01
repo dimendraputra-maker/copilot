@@ -273,15 +273,21 @@ with page[0]:
                 if action_section:
                     date_str = datetime.now().strftime("%d %b")
                     
-                    # TAMBALAN: Regex baru agar mendukung deskripsi panjang/multi-baris
-                    tasks = re.findall(r"\*\*(.+?)\*\*[:\-]\s*(.+?)(?=\n\n|\n\*\*|$)", action_section.group(1), re.DOTALL)
+                    # TAMBALAN REGEX FLEKSIBEL: Mendukung format dengan atau tanpa bintang (**)
+                    tasks = re.findall(r"(?:\*\*)?(.+?)(?:\*\*)?[:\-]\s*(.+?)(?=\n\n|\n\s*(?:\*\*)?[A-Z]|$)", action_section.group(1), re.DOTALL)
                     
                     for title, desc in tasks:
-                        supabase.table("pending_tasks").insert({
-                            "user_id": user_nickname, 
-                            "task_name": f"[{date_str}] {title.strip()} | {desc.strip()}", 
-                            "status": "Pending"
-                        }).execute()
+                        # Membersihkan sisa karakter markdown agar rapi di database
+                        clean_title = title.replace("**", "").strip()
+                        clean_desc = desc.replace("**", "").strip()
+                        
+                        # Validasi agar tidak memasukkan teks kosong atau simbol aneh
+                        if len(clean_title) > 3:
+                            supabase.table("pending_tasks").insert({
+                                "user_id": user_nickname, 
+                                "task_name": f"[{date_str}] {clean_title} | {clean_desc}", 
+                                "status": "Pending"
+                            }).execute()
                 st.session_state.data_saved = True; st.rerun()
 
             st.download_button("📥 Download PDF Laporan", data=generate_pdf(user_nickname, res, f_score), file_name=f"Audit_{user_nickname}.pdf")
