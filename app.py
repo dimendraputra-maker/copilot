@@ -269,20 +269,22 @@ with page[0]:
             if not st.session_state.data_saved:
                 supabase.table("audit_log").insert({"user_id": user_nickname, "score": f_score, "audit_report": res, "input_preview": st.session_state.initial_tasks[:100]}).execute()
                 
-                action_section = re.search(r"### ACTION_ITEMS\s*(.*?)(?:\n###|$)", res, re.DOTALL | re.IGNORECASE)
+                # REGEX PALING EFEKTIF: Cari ACTION_ITEMS tanpa peduli simbol ###
+                action_section = re.search(r"ACTION_ITEMS\s*\n?(.*?)($|###|🛡️)", res, re.DOTALL | re.IGNORECASE)
+                
                 if action_section:
                     date_str = datetime.now().strftime("%d %b")
+                    content = action_section.group(1).strip()
                     
-                    # TAMBALAN REGEX FLEKSIBEL: Mendukung format dengan atau tanpa bintang (**)
-                    tasks = re.findall(r"(?:\*\*)?(.+?)(?:\*\*)?[:\-]\s*(.+?)(?=\n\n|\n\s*(?:\*\*)?[A-Z]|$)", action_section.group(1), re.DOTALL)
+                    # REGEX FLEKSIBEL: Tangkap format 'Judul: Deskripsi' pakai bintang maupun tidak
+                    tasks = re.findall(r"(?:\n|^)(?:\* )?(?:\*\*)?(.+?)(?:\*\*)?[:\-]\s*(.+?)(?=\n(?:\* )?(?:\*\*)?[A-Z]|\n\n|$)", content, re.DOTALL)
                     
                     for title, desc in tasks:
-                        # Membersihkan sisa karakter markdown agar rapi di database
-                        clean_title = title.replace("**", "").strip()
+                        clean_title = title.replace("**", "").replace("-", "").strip()
                         clean_desc = desc.replace("**", "").strip()
                         
-                        # Validasi agar tidak memasukkan teks kosong atau simbol aneh
-                        if len(clean_title) > 3:
+                        # Validasi: Masukkan jika judul lebih dari 3 huruf dan bukan emoji pelindung
+                        if len(clean_title) > 3 and "🛡️" not in clean_title:
                             supabase.table("pending_tasks").insert({
                                 "user_id": user_nickname, 
                                 "task_name": f"[{date_str}] {clean_title} | {clean_desc}", 
