@@ -189,7 +189,7 @@ else:
     st.sidebar.info("Tidak ada tugas aktif.")
 
 # ==========================================
-# 5. AUDIT PAGE
+# 5. AUDIT PAGE (VERSI STABIL & ANTI-REJECT)
 # ==========================================
 page = st.tabs(["🔍 Sesi Audit", "📊 Dashboard"])
 
@@ -201,22 +201,21 @@ with page[0]:
         st.markdown("""
         **1. INPUT & MEMORY BRIDGE**
         * Masukkan tantangan teknis atau rencana strategismu secara mendalam.
-        * **Penting:** Jika ini lanjutan, unggah **PDF Laporan Terakhir** agar AI ingat konteksnya.
         """)
     with col2:
         st.markdown("""
         **2. INTEROGASI & VALIDASI**
         * Jawab **4 tahap pertanyaan** investigasi untuk membongkar *blind spot*.
-        * Gunakan **Upload Foto** di setiap tahap untuk melampirkan bukti lapangan.
         """)
     with col3:
         st.markdown("""
         **3. OUTPUT & EKSEKUSI**
         * Dapatkan **Skor Performa** dan **Blueprint Solusi**.
-        * Cek **Sidebar (Action Items)**: Tugas berlabel tanggal akan otomatis muncul di sana.
+        * Cek **Sidebar (Action Items)** untuk tugas otomatis.
         """)
     st.markdown("---")
 
+    # --- STAGE: INPUT ---
     if st.session_state.audit_stage == 'input':
         u_in = st.text_area("Apa tantangan strategis/teknismu hari ini?", height=150)
         u_f = st.file_uploader("Upload Foto/PDF Laporan Lama (Memory Bridge)", accept_multiple_files=True)
@@ -227,6 +226,7 @@ with page[0]:
                 st.session_state.initial_tasks = u_in
                 st.session_state.audit_stage, st.session_state.q_index = 'interrogation', 1; st.rerun()
 
+    # --- STAGE: INTERROGATION ---
     elif st.session_state.audit_stage == 'interrogation':
         st.subheader(f"Fase Interogasi {st.session_state.q_index}/4")
         hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
@@ -234,7 +234,7 @@ with page[0]:
         task_q = Task(
             description=f"Masalah: {st.session_state.initial_tasks}. Memori Dokumen: {st.session_state.initial_evidence}. History: {hist}. Tahap: {st.session_state.q_index}/4.",
             agent=consultant, 
-            expected_output="Respon percakapan satu arah yang berisi validasi jawaban sebelumnya dan maksimal 1-2 pertanyaan lanjutan yang tajam (Tanpa daftar angka/list)."
+            expected_output="Respon percakapan satu arah yang berisi validasi dan maksimal 1-2 pertanyaan tajam."
         )
         with st.spinner("Menganalisa..."):
             current_q = str(Crew(agents=[consultant], tasks=[task_q]).kickoff().raw)
@@ -249,90 +249,96 @@ with page[0]:
             else: st.session_state.audit_stage = 'report'
             st.rerun()
 
+    # --- STAGE: REPORT & SIDEBAR EXTRACTION ---
     elif st.session_state.audit_stage == 'report':
-        # PERBAIKAN: Hanya render AI jika data belum tersimpan
         if not st.session_state.data_saved:
-            with st.spinner("Menyusun Laporan & Mengamankan Data..."):
+            with st.spinner("Menyusun Laporan & Mengamankan Sidebar..."):
                 full_hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
                 
                 task_fin = Task(
                     description=f"History: {full_hist}.", 
                     agent=architect,
-                    expected_output="Laporan strategi utuh dengan JEDA 2 BARIS antar section. Isi: 1. Analisa Konklusi (per paragraf), 2. Roadmap Strategis, dan 3. Action Items (Wajib baris baru per tugas)."
+                    expected_output="Laporan strategi utuh dengan JEDA 2 BARIS antar section. Isi: 1. Analisa Konklusi, 2. Roadmap Strategis, dan 3. Action Items."
                 )
                 res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
                 
+                # Ekstrak Skor
                 score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*(?:\[)?([\d.]+)(?:\])?", res, re.IGNORECASE)
                 f_score = float(score_match.group(1)) if score_match else 0.0
                 
-                # 1. Simpan Laporan ke Database
+                # 1. Simpan Laporan Utama
                 supabase.table("audit_log").insert({"user_id": user_nickname, "score": f_score, "audit_report": res, "input_preview": st.session_state.initial_tasks[:100]}).execute()
                 
-                # 2. Proses Action Items dengan Regex Paling Fleksibel
-                action_section = re.search(r"ACTION_ITEMS\s*\n?(.*?)($|###|🛡️)", res, re.DOTALL | re.IGNORECASE)
+                # 2. PROSES SIDEBAR (Regex Super Agresif)
+                # Mencari bagian Action Items tanpa peduli besar kecil huruf atau emoji
+                action_search = re.search(r"(?:ACTION_ITEMS|Action Items|📋).*?\n(.*?)($|###|🛡️|Protokol)", res, re.DOTALL | re.IGNORECASE)
                 
-                if action_section:
+                if action_search:
+                    task_content = action_search.group(1).strip()
+                    # Menangkap pola 'Judul: Deskripsi' baik dengan bullet points (- atau *) atau tidak
+                    task_list = re.findall(r"(?:\n|^)(?:\*|- )?(?:\*\*)?(.+?)(?:\*\*)?[:\-]\s*(.+?)(?=\n(?:\*|- )?(?:\*\*)?[A-Z]|\n\n|$)", task_content, re.DOTALL)
+                    
                     date_str = datetime.now().strftime("%d %b")
-                    content = action_section.group(1).strip()
-                    
-                    tasks = re.findall(r"(?:\n|^)(?:\* )?(?:\*\*)?(.+?)(?:\*\*)?[:\-]\s*(.+?)(?=\n(?:\* )?(?:\*\*)?[A-Z]|\n\n|$)", content, re.DOTALL)
-                    
-                    for title, desc in tasks:
+                    for title, desc in task_list:
                         clean_title = title.replace("**", "").replace("-", "").strip()
                         clean_desc = desc.replace("**", "").strip()
-                        
-                        if len(clean_title) > 3 and "🛡️" not in clean_title:
+                        if len(clean_title) > 3:
                             supabase.table("pending_tasks").insert({
                                 "user_id": user_nickname, 
                                 "task_name": f"[{date_str}] {clean_title} | {clean_desc}", 
                                 "status": "Pending"
                             }).execute()
                 
-                # 3. Simpan di Session State lalu RERUN agar Sidebar muncul INSTAN
                 st.session_state.report_cache = res
                 st.session_state.score_cache = f_score
                 st.session_state.data_saved = True
                 st.rerun()
 
-        # Render Laporan dari Cache setelah Rerun
+        # Render Laporan dari Cache
         st.markdown(st.session_state.report_cache)
         f_score = st.session_state.score_cache
 
         st.download_button("📥 Download PDF Laporan", data=generate_pdf(user_nickname, st.session_state.report_cache, f_score), file_name=f"Audit_{user_nickname}.pdf")
         
         st.divider()
-        st.subheader("📊 Evaluasi Sistem (Beta Test)")
+        st.subheader("📊 Evaluasi Sistem & Analitik")
         with st.form("evaluation_form"):
             col_a, col_b = st.columns(2)
             with col_a:
-                acc = st.select_slider("Akurasi Diagnosa AI (1-5):", options=[1, 2, 3, 4, 5], value=4)
-                clr = st.select_slider("Kejelasan Instruksi (1-5):", options=[1, 2, 3, 4, 5], value=4)
+                acc = st.select_slider("Akurasi AI (1-5):", options=[1, 2, 3, 4, 5], value=4)
+                clr = st.select_slider("Kejelasan (1-5):", options=[1, 2, 3, 4, 5], value=4)
             with col_b:
-                readi = st.radio("Kesiapan Eksekusi:", [1, 2, 3, 4, 5], help="1: Bingung, 5: Sangat Paham")
+                readi = st.radio("Kesiapan Eksekusi:", [1, 2, 3, 4, 5])
             
-            crit = st.text_area("Masukan/Kritik:", placeholder="Apa yang perlu diperbaiki?")
+            crit = st.text_area("Masukan/Kritik:", placeholder="Tulis masukan Anda di sini...")
             submit_eval = st.form_submit_button("Kirim Evaluasi & Reset")
 
             if submit_eval:
                 dur = (time.time() - st.session_state.start_time) / 60 if st.session_state.start_time else 0
                 words = len(str(st.session_state.chat_history).split())
-                save_to_analytics(user_nickname, dur, acc, clr, readi, crit, words)
-                st.success("Analitik terkirim!")
                 
-                # Bersihkan State untuk Sesi Baru
-                st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved = 'input', [], False
-                st.session_state.start_time, st.session_state.report_cache, st.session_state.score_cache = None, "", 0.0
-                st.rerun()
+                # Menjalankan fungsi save_to_analytics
+                success = save_to_analytics(user_nickname, dur, acc, clr, readi, crit, words)
+                
+                if success:
+                    st.success("Analitik berhasil disimpan!")
+                    # Reset state setelah sukses
+                    st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved = 'input', [], False
+                    st.session_state.start_time, st.session_state.report_cache, st.session_state.score_cache = None, "", 0.0
+                    st.rerun()
+                else:
+                    st.error("Gagal mencatat analitik. Pastikan tabel 'audit_analytics' sudah dibuat di Supabase.")
 
-        if st.button("Reset Tanpa Kirim Evaluasi"):
+        if st.button("Reset Tanpa Kirim"):
             st.session_state.audit_stage, st.session_state.chat_history, st.session_state.data_saved = 'input', [], False
             st.session_state.start_time, st.session_state.report_cache, st.session_state.score_cache = None, "", 0.0
             st.rerun()
 
+# --- TAB: DASHBOARD ---
 with page[1]:
-    st.title("📈 Dashboard")
+    st.title("📈 Dashboard Performa")
     res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).order("created_at", desc=False).execute()
     if res_log.data:
         df = pd.DataFrame(res_log.data)
-        st.plotly_chart(px.line(df, x='created_at', y='score', markers=True, range_y=[0, 10]), use_container_width=True)
+        st.plotly_chart(px.line(df, x='created_at', y='score', title="Trend Skor Audit", markers=True, range_y=[0, 10]), use_container_width=True)
         st.dataframe(df.sort_values(by='created_at', ascending=False), use_container_width=True)
