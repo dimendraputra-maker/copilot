@@ -52,14 +52,21 @@ init_state()
 def save_to_analytics(nickname, duration, accuracy, clarity, readiness, critique, word_count):
     try:
         data = {
-            "user_nickname": nickname, "time_spent": float(duration), "ai_accuracy": int(accuracy),
-            "clarity_score": int(clarity), "action_readiness": int(readiness),
-            "critique": str(critique), "word_count_input": int(word_count)
+            "user_nickname": str(nickname),
+            "time_spent": float(duration),
+            "ai_accuracy": int(accuracy),
+            "clarity_score": int(clarity),
+            "action_readiness": int(readiness),
+            "critique": str(critique),
+            "word_count_input": int(word_count)
         }
-        supabase.table("audit_analytics").insert(data).execute()
+        # Eksekusi dan tangkap error dari Supabase secara eksplisit
+        response = supabase.table("audit_analytics").insert(data).execute()
         return True
     except Exception as e:
-        st.error(f"Gagal mencatat data: {e}")
+        # Menampilkan pesan error asli dari server Supabase
+        st.error(f"❌ DATABASE REJECTED: {str(e)}")
+        st.write("Cek Nama Kolom di Supabase: user_nickname, time_spent, ai_accuracy, clarity_score, action_readiness, critique, word_count_input")
         return False
 
 def process_vision(files):
