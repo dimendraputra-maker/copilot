@@ -194,6 +194,7 @@ else:
 page = st.tabs(["🔍 Sesi Audit", "📊 Dashboard"])
 
 with page[0]:
+    # --- PANDUAN OPERASIONAL (VERSI DETAIL KAMU) ---
     st.warning("### ⚠️ PANDUAN OPERASIONAL STRATEGIC COPILOT")
     col1, col2, col3 = st.columns(3)
     
@@ -201,17 +202,19 @@ with page[0]:
         st.markdown("""
         **1. INPUT & MEMORY BRIDGE**
         * Masukkan tantangan teknis atau rencana strategismu secara mendalam.
+        * **Penting:** Jika ini lanjutan, unggah **PDF Laporan Terakhir** agar AI ingat konteksnya.
         """)
     with col2:
         st.markdown("""
         **2. INTEROGASI & VALIDASI**
         * Jawab **4 tahap pertanyaan** investigasi untuk membongkar *blind spot*.
+        * Gunakan **Upload Foto** di setiap tahap untuk melampirkan bukti lapangan.
         """)
     with col3:
         st.markdown("""
         **3. OUTPUT & EKSEKUSI**
         * Dapatkan **Skor Performa** dan **Blueprint Solusi**.
-        * Cek **Sidebar (Action Items)** untuk tugas otomatis.
+        * Cek **Sidebar (Action Items)**: Tugas berlabel tanggal akan otomatis muncul di sana.
         """)
     st.markdown("---")
 
