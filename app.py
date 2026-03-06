@@ -198,7 +198,7 @@ architect = Agent(
 )
 
 # ==========================================
-# 5. MAIN UI (CHAT MODE)
+# 5. MAIN UI (CHAT MODE: GEMINI STYLE)
 # ==========================================
 page = st.tabs([f"💬 {selected_ws} Chat", "📊 Analytics"])
 
@@ -210,7 +210,7 @@ with page[0]:
         u_f = st.file_uploader("Lampirkan Data/Bukti (Opsional)", accept_multiple_files=True)
         
         if st.button("Mulai Diskusi 🚀", use_container_width=True):
-            if len(u_in) > 10:
+            if len(u_in) > 5:
                 with st.spinner("Mempersiapkan asisten..."):
                     st.session_state.start_time = time.time()
                     st.session_state.initial_evidence = process_vision(u_f)
@@ -231,69 +231,92 @@ with page[0]:
 
     # --- TAHAP 2: INTERAKTIF CHAT ---
     elif st.session_state.audit_stage == 'interrogation':
-        # Tampilkan Histori Chat
-        for msg in st.session_state.ui_chat:
-            with st.chat_message(msg["role"]): st.markdown(msg["content"])
+        # Gunakan container agar chat rapi dan bisa di-scroll secara natural
+        chat_container = st.container()
+        
+        # Tampilkan Histori Chat di dalam container
+        with chat_container:
+            for msg in st.session_state.ui_chat:
+                with st.chat_message(msg["role"]): 
+                    st.markdown(msg["content"])
 
-        # Input Chat
-        if prompt := st.chat_input("Ketik pesanmu di sini..."):
+        # Input Chat di bagian paling bawah
+        if prompt := st.chat_input("Balas pesan di sini..."):
+            # 1. Tampilkan pesan user ke UI
             st.session_state.ui_chat.append({"role": "user", "content": prompt})
             st.session_state.chat_history.append({"q": st.session_state.last_ai_q, "a": prompt})
             
+            # Cek apakah sudah batas pertanyaan
             if st.session_state.q_index >= 4:
                 st.session_state.audit_stage = 'report'
                 st.rerun()
             else:
                 st.session_state.q_index += 1
-                with st.chat_message("assistant"):
-                    with st.spinner("Berpikir..."):
-                        hist_str = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
-                        task_next = Task(
-                            description=f"Diskusi: {hist_str}. Lanjutkan dengan 1 pertanyaan lagi untuk tahap {st.session_state.q_index}/4.",
-                            agent=consultant, expected_output="Pesan chat."
-                        )
-                        reply = str(Crew(agents=[consultant], tasks=[task_next]).kickoff().raw)
-                        st.markdown(reply)
-                        st.session_state.last_ai_q = reply
-                        st.session_state.ui_chat.append({"role": "assistant", "content": reply})
+                # 2. Tampilkan respon AI dengan efek loading yang rapi di dalam container
+                with chat_container:
+                    with st.chat_message("assistant"):
+                        with st.spinner("Berpikir..."):
+                            hist_str = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
+                            task_next = Task(
+                                description=f"Diskusi: {hist_str}. Lanjutkan dengan 1 pertanyaan tajam lagi untuk tahap {st.session_state.q_index}/4.",
+                                agent=consultant, expected_output="Pesan chat."
+                            )
+                            reply = str(Crew(agents=[consultant], tasks=[task_next]).kickoff().raw)
+                            st.markdown(reply)
+                            st.session_state.last_ai_q = reply
+                            st.session_state.ui_chat.append({"role": "assistant", "content": reply})
+                st.rerun() # Refresh agar kotak input bersih kembali
 
     # --- TAHAP 3: LAPORAN & EKSTRAKSI ---
     elif st.session_state.audit_stage == 'report':
         if not st.session_state.data_saved:
             with st.spinner("Menyusun Blueprint Final..."):
                 full_hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
+                # PERBAIKAN: Instruksi yang sangat spesifik untuk Architect Agent
                 task_fin = Task(
-                    description=f"Susun Blueprint dari chat ini: {full_hist}.", 
+                    description=f"Susun Blueprint dari chat ini: {full_hist}. WAJIB sertakan 'SKOR_FINAL: [angka]' dan WAJIB sertakan bagian 'ACTION_ITEMS:' dengan daftar tugas berformat: **Nama Tugas** - Deskripsi singkat.", 
                     agent=architect, expected_output="Laporan lengkap dengan SKOR_FINAL dan ACTION_ITEMS."
                 )
                 res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
                 
-                # Simpan ke DB
+                # Simpan Skor ke DB
                 score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*([\d.]+)", res, re.IGNORECASE)
                 f_score = float(score_match.group(1)) if score_match else 5.0
                 
                 supabase.table("audit_log").insert({"user_id": user_nickname, "category": selected_ws, "score": f_score, "audit_report": res}).execute()
                 
-                # Ekstrak Tugas ke Sidebar
-                action_search = re.search(r"ACTION_ITEMS\s*\n?(.*?)($|###)", res, re.DOTALL | re.IGNORECASE)
+                # PERBAIKAN: Regex Ekstraksi Tugas yang jauh lebih kuat
+                action_search = re.search(r"(?:ACTION_ITEMS|Action Items|📋).*?\n(.*?)($|###|🛡️|Protokol)", res, re.DOTALL | re.IGNORECASE)
                 if action_search:
-                    items = re.findall(r"\*\*(.+?)\*\*[:\-]\s*(.+?)(?=\n\n|\n\*|$)", action_search.group(1), re.DOTALL)
+                    task_content = action_search.group(1).strip()
+                    # Menangkap pola: **Judul** - Deskripsi ATAU **Judul**: Deskripsi
+                    items = re.findall(r"\*\*(.+?)\*\*\s*[:-]\s*(.+?)(?=\n|$)", task_content)
+                    
                     for title, desc in items:
-                        supabase.table("pending_tasks").insert({"user_id": user_nickname, "category": selected_ws, "task_name": f"[{datetime.now().strftime('%d %b')}] {title} | {desc}", "status": "Pending"}).execute()
+                        # Masukkan ke Sidebar (Database pending_tasks)
+                        clean_title = title.replace("**", "").strip()
+                        clean_desc = desc.replace("**", "").strip()
+                        supabase.table("pending_tasks").insert({
+                            "user_id": user_nickname, 
+                            "category": selected_ws, 
+                            "task_name": f"[{datetime.now().strftime('%d %b')}] {clean_title} | {clean_desc}", 
+                            "status": "Pending"
+                        }).execute()
                 
                 st.session_state.report_cache, st.session_state.score_cache = res, f_score
-                st.session_state.data_saved = True; st.rerun()
+                st.session_state.data_saved = True
+                st.rerun()
 
-        # Menampilkan Laporan
+        # Menampilkan Laporan dari Cache
         st.markdown(st.session_state.report_cache)
         
-        # Fitur PDF Ditambahkan Kembali
+        # Fitur PDF 
         st.download_button("📥 Download PDF Blueprint", 
                            data=generate_pdf(user_nickname, st.session_state.report_cache, st.session_state.score_cache), 
                            file_name=f"Audit_{selected_ws}_{datetime.now().strftime('%d%m')}.pdf",
                            use_container_width=True)
         
-        # Form Evaluasi Detail Ditambahkan Kembali
+        # Form Evaluasi Detail
         st.divider()
         st.subheader("📊 Evaluasi & Tutup Sesi")
         with st.form("evaluation_form"):
