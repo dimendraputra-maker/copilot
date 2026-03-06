@@ -193,12 +193,12 @@ consultant = Agent(
 architect = Agent(
     role='Solutions Architect',
     goal='Menyusun Blueprint Strategis berdasarkan hasil diskusi.',
-    backstory="Susun laporan dengan bagian SKOR_FINAL, ANALISA, dan ACTION_ITEMS. Pastikan format penulisan tugas rapi agar sistem bisa membacanya.",
+    backstory="Susun laporan dengan bagian SKOR_FINAL, ANALISA, dan ACTION_ITEMS. Pastikan format penulisan tugas di Action Items jelas agar sistem bisa mengekstraknya.",
     llm=llm_gemini
 )
 
 # ==========================================
-# 5. MAIN UI (CHAT MODE: GEMINI STYLE)
+# 5. MAIN UI (CHAT MODE & EXTRACTION)
 # ==========================================
 page = st.tabs([f"💬 {selected_ws} Chat", "📊 Analytics"])
 
@@ -267,14 +267,13 @@ with page[0]:
                             st.session_state.ui_chat.append({"role": "assistant", "content": reply})
                 st.rerun() # Refresh agar kotak input bersih kembali
 
-    # --- TAHAP 3: LAPORAN & EKSTRAKSI ---
+    # --- TAHAP 3: LAPORAN & EKSTRAKSI (SAPU JAGAT) ---
     elif st.session_state.audit_stage == 'report':
         if not st.session_state.data_saved:
-            with st.spinner("Menyusun Blueprint Final..."):
+            with st.spinner("Menyusun Blueprint Final & Mengekstrak Tugas..."):
                 full_hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
-                # PERBAIKAN: Instruksi yang sangat spesifik untuk Architect Agent
                 task_fin = Task(
-                    description=f"Susun Blueprint dari chat ini: {full_hist}. WAJIB sertakan 'SKOR_FINAL: [angka]' dan WAJIB sertakan bagian 'ACTION_ITEMS:' dengan daftar tugas berformat: **Nama Tugas** - Deskripsi singkat.", 
+                    description=f"Susun Blueprint dari chat ini: {full_hist}. WAJIB sertakan 'SKOR_FINAL: [angka]' dan WAJIB sertakan bagian 'ACTION_ITEMS:' dengan daftar tugas.", 
                     agent=architect, expected_output="Laporan lengkap dengan SKOR_FINAL dan ACTION_ITEMS."
                 )
                 res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
@@ -282,26 +281,36 @@ with page[0]:
                 # Simpan Skor ke DB
                 score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*([\d.]+)", res, re.IGNORECASE)
                 f_score = float(score_match.group(1)) if score_match else 5.0
-                
                 supabase.table("audit_log").insert({"user_id": user_nickname, "category": selected_ws, "score": f_score, "audit_report": res}).execute()
                 
-                # PERBAIKAN: Regex Ekstraksi Tugas yang jauh lebih kuat
-                action_search = re.search(r"(?:ACTION_ITEMS|Action Items|📋).*?\n(.*?)($|###|🛡️|Protokol)", res, re.DOTALL | re.IGNORECASE)
-                if action_search:
-                    task_content = action_search.group(1).strip()
-                    # Menangkap pola: **Judul** - Deskripsi ATAU **Judul**: Deskripsi
-                    items = re.findall(r"\*\*(.+?)\*\*\s*[:-]\s*(.+?)(?=\n|$)", task_content)
-                    
-                    for title, desc in items:
-                        # Masukkan ke Sidebar (Database pending_tasks)
-                        clean_title = title.replace("**", "").strip()
-                        clean_desc = desc.replace("**", "").strip()
-                        supabase.table("pending_tasks").insert({
-                            "user_id": user_nickname, 
-                            "category": selected_ws, 
-                            "task_name": f"[{datetime.now().strftime('%d %b')}] {clean_title} | {clean_desc}", 
-                            "status": "Pending"
-                        }).execute()
+                # ==========================================
+                # LOGIKA EKSTRAKSI TUGAS ANTI-BOCOR
+                # ==========================================
+                action_block_match = re.search(r"(?:ACTION_ITEMS|Action Items|📋)(.*?)(?:###|🛡️|Protokol|$)", res, re.DOTALL | re.IGNORECASE)
+                
+                if action_block_match:
+                    task_text = action_block_match.group(1).strip()
+                    # Baca per baris dari blok Action Items
+                    for line in task_text.split('\n'):
+                        # Cari teks yang di-bold sebagai judul tugas
+                        bold_match = re.search(r'\*\*(.+?)\*\*', line)
+                        if bold_match:
+                            raw_title = bold_match.group(1).strip()
+                            # Deskripsi adalah sisa dari baris tersebut
+                            desc = line.replace(f"**{raw_title}**", "").strip()
+                            desc = re.sub(r'^[:\-]\s*', '', desc).strip()
+                            
+                            # Jika tidak ada deskripsi tambahan, pakai default
+                            if not desc:
+                                desc = "Segera eksekusi tugas ini."
+
+                            if len(raw_title) > 2:
+                                supabase.table("pending_tasks").insert({
+                                    "user_id": user_nickname, 
+                                    "category": selected_ws, 
+                                    "task_name": f"[{datetime.now().strftime('%d %b')}] {raw_title} | {desc}", 
+                                    "status": "Pending"
+                                }).execute()
                 
                 st.session_state.report_cache, st.session_state.score_cache = res, f_score
                 st.session_state.data_saved = True
