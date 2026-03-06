@@ -186,17 +186,16 @@ else:
 consultant = Agent(
     role='Lead Strategic Copilot',
     goal='Mendiagnosa masalah melalui percakapan chat yang tajam.',
-    backstory=f"Kamu adalah pakar strategi di ruang kerja {selected_ws}. Bicara seperti di WhatsApp/Slack. Gunakan 'Saya' dan 'Kamu'. Validasi jawaban user lalu ajukan 1 pertanyaan tajam.",
+    backstory=f"Kamu adalah pakar strategi di ruang kerja {selected_ws}. Bicara seperti di WhatsApp/Slack. Gunakan 'Saya' dan 'Kamu'. Validasi jawaban user lalu ajukan 1-2 pertanyaan tajam yang benar-benar dibutuhkan untuk mendapatkan output maksimal.",
     llm=llm_gemini
 )
 
 architect = Agent(
     role='Solutions Architect',
     goal='Menyusun Blueprint Strategis berdasarkan hasil diskusi.',
-    backstory="Susun laporan dengan bagian SKOR_FINAL, ANALISA, dan ACTION_ITEMS. Pastikan format penulisan tugas di Action Items jelas agar sistem bisa mengekstraknya.",
+    backstory="Susun laporan dengan bagian SKOR_FINAL dan ACTION_ITEMS. Untuk ACTION_ITEMS, WAJIB gunakan list dengan format: - **Nama Tugas**: Deskripsi.",
     llm=llm_gemini
 )
-
 # ==========================================
 # 5. MAIN UI (CHAT MODE & EXTRACTION)
 # ==========================================
@@ -267,13 +266,13 @@ with page[0]:
                             st.session_state.ui_chat.append({"role": "assistant", "content": reply})
                 st.rerun() # Refresh agar kotak input bersih kembali
 
-    # --- TAHAP 3: LAPORAN & EKSTRAKSI (SAPU JAGAT) ---
+    # --- TAHAP 3: LAPORAN & EKSTRAKSI (SUPER REGEX) ---
     elif st.session_state.audit_stage == 'report':
         if not st.session_state.data_saved:
             with st.spinner("Menyusun Blueprint Final & Mengekstrak Tugas..."):
                 full_hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
                 task_fin = Task(
-                    description=f"Susun Blueprint dari chat ini: {full_hist}. WAJIB sertakan 'SKOR_FINAL: [angka]' dan WAJIB sertakan bagian 'ACTION_ITEMS:' dengan daftar tugas.", 
+                    description=f"Susun Blueprint dari chat ini: {full_hist}. WAJIB ada 'SKOR_FINAL: [angka]' dan daftar ACTION_ITEMS berformat list (misal: - **Tugas**: Penjelasan).", 
                     agent=architect, expected_output="Laporan lengkap dengan SKOR_FINAL dan ACTION_ITEMS."
                 )
                 res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
@@ -284,33 +283,28 @@ with page[0]:
                 supabase.table("audit_log").insert({"user_id": user_nickname, "category": selected_ws, "score": f_score, "audit_report": res}).execute()
                 
                 # ==========================================
-                # LOGIKA EKSTRAKSI TUGAS ANTI-BOCOR
+                # LOGIKA EKSTRAKSI TUGAS (ANTI-BOCOR)
                 # ==========================================
-                action_block_match = re.search(r"(?:ACTION_ITEMS|Action Items|📋)(.*?)(?:###|🛡️|Protokol|$)", res, re.DOTALL | re.IGNORECASE)
+                # 1. Menangkap semua pola list: [angka/strip/bintang] **Judul** [titik dua/strip] Deskripsi
+                tasks_found = re.findall(r"(?:^|\n)(?:\d+\.|\*|\-)\s*\*\*(.+?)\*\*\s*[:\-]?\s*(.+)", res)
                 
-                if action_block_match:
-                    task_text = action_block_match.group(1).strip()
-                    # Baca per baris dari blok Action Items
-                    for line in task_text.split('\n'):
-                        # Cari teks yang di-bold sebagai judul tugas
-                        bold_match = re.search(r'\*\*(.+?)\*\*', line)
-                        if bold_match:
-                            raw_title = bold_match.group(1).strip()
-                            # Deskripsi adalah sisa dari baris tersebut
-                            desc = line.replace(f"**{raw_title}**", "").strip()
-                            desc = re.sub(r'^[:\-]\s*', '', desc).strip()
-                            
-                            # Jika tidak ada deskripsi tambahan, pakai default
-                            if not desc:
-                                desc = "Segera eksekusi tugas ini."
+                # 2. Jika AI lupa pakai list/bullet point, pakai pola cadangan
+                if not tasks_found:
+                    tasks_found = re.findall(r"(?:^|\n)\*\*(.+?)\*\*\s*[:-]\s*(.+)", res)
 
-                            if len(raw_title) > 2:
-                                supabase.table("pending_tasks").insert({
-                                    "user_id": user_nickname, 
-                                    "category": selected_ws, 
-                                    "task_name": f"[{datetime.now().strftime('%d %b')}] {raw_title} | {desc}", 
-                                    "status": "Pending"
-                                }).execute()
+                # 3. Masukkan ke Database Pending Tasks
+                for title, desc in tasks_found:
+                    clean_title = title.replace("**", "").strip()
+                    clean_desc = desc.replace("**", "").strip()
+                    
+                    # Validasi: Pastikan yang ditangkap benar-benar tugas, bukan sekadar sub-judul
+                    if len(clean_title) > 3 and len(clean_desc) > 5 and "SKOR" not in clean_title.upper():
+                        supabase.table("pending_tasks").insert({
+                            "user_id": user_nickname, 
+                            "category": selected_ws, 
+                            "task_name": f"[{datetime.now().strftime('%d %b')}] {clean_title} | {clean_desc}", 
+                            "status": "Pending"
+                        }).execute()
                 
                 st.session_state.report_cache, st.session_state.score_cache = res, f_score
                 st.session_state.data_saved = True
