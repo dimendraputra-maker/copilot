@@ -20,7 +20,6 @@ os.environ["OTEL_SDK_DISABLED"] = "true"
 os.environ["CREWAI_TELEMETRY_OUT_OUT"] = "true"
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-# API & DATABASE (Ambil dari Streamlit Secrets)
 API_KEY = st.secrets["GOOGLE_API_KEY"]
 os.environ["GOOGLE_API_KEY"] = API_KEY.strip()
 genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
@@ -29,7 +28,6 @@ SB_URL = st.secrets["SUPABASE_URL"]
 SB_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SB_URL, SB_KEY)
 
-# Model LLM
 llm_gemini = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.3)
 vision_model = genai.GenerativeModel('gemini-2.0-flash')
 
@@ -37,7 +35,6 @@ vision_model = genai.GenerativeModel('gemini-2.0-flash')
 # 1. CORE FUNCTIONS & SELECTIVE MEMORY
 # ==========================================
 def init_state():
-    """Inisialisasi semua variabel state agar aplikasi stabil saat rerun"""
     defaults = {
         'audit_stage': 'input', 'q_index': 0, 'chat_history': [], 'ui_chat': [],
         'initial_tasks': "", 'initial_evidence': "", 'data_saved': False, 
@@ -50,7 +47,6 @@ def init_state():
 init_state()
 
 def save_to_analytics(nickname, duration, accuracy, clarity, readiness, critique, word_count, category):
-    """Fungsi untuk menyimpan hasil evaluasi form ke database"""
     try:
         data = {
             "user_nickname": str(nickname), "time_spent": float(duration),
@@ -65,13 +61,11 @@ def save_to_analytics(nickname, duration, accuracy, clarity, readiness, critique
         return False
 
 def get_user_workspaces(uid):
-    """Menarik daftar folder/workspace buatan user dari database"""
     res = supabase.table("user_workspaces").select("workspace_name").eq("user_id", uid).execute()
     if not res.data: return ["General"]
     return [d['workspace_name'] for d in res.data]
 
 def get_memory_context(user_id, category):
-    """Fungsi 'Otak' AI untuk mengingat kejadian di workspace tertentu (RAG)"""
     try:
         logs = supabase.table("audit_log").select("audit_report").eq("user_id", user_id).eq("category", category).order("created_at", desc=True).limit(2).execute()
         tasks = supabase.table("pending_tasks").select("task_name").eq("user_id", user_id).eq("category", category).eq("status", "Pending").execute()
@@ -134,7 +128,6 @@ user_nickname = st.session_state.current_user
 # ==========================================
 st.sidebar.title(f"👤 {user_nickname}")
 
-# --- FITUR BUAT WORKSPACE SENDIRI ---
 st.sidebar.markdown("### 📁 Create New Workspace")
 new_ws_input = st.sidebar.text_input("Nama Ruang Kerja Baru:")
 if st.sidebar.button("Tambah & Pindah", use_container_width=True):
@@ -142,11 +135,10 @@ if st.sidebar.button("Tambah & Pindah", use_container_width=True):
         try:
             supabase.table("user_workspaces").insert({"user_id": user_nickname, "workspace_name": new_ws_input}).execute()
             st.session_state.active_workspace = new_ws_input
-            st.session_state.audit_stage = 'input' # Reset ke awal saat pindah
+            st.session_state.audit_stage = 'input' 
             st.rerun()
         except: st.sidebar.error("Nama sudah ada.")
 
-# --- SELECTOR WORKSPACE ---
 available_ws = get_user_workspaces(user_nickname)
 selected_ws = st.sidebar.selectbox("Pilih Ruang Kerja Aktif:", available_ws, index=available_ws.index(st.session_state.active_workspace) if st.session_state.active_workspace in available_ws else 0)
 
@@ -160,7 +152,6 @@ if selected_ws != st.session_state.active_workspace:
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"### 📋 Tasks: {selected_ws}")
 
-# Load Tasks Filtered by User & Workspace
 res_t = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("category", selected_ws).eq("status", "Pending").order("created_at", desc=True).execute()
 
 if res_t.data:
@@ -172,7 +163,6 @@ if res_t.data:
                 supabase.table("pending_tasks").update({"status": "Completed", "completed_at": datetime.now().isoformat()}).eq("id", t['id']).execute()
                 st.rerun()
     
-    # Tombol Hapus Semua Tugas Ditambahkan Kembali
     st.sidebar.markdown("---")
     if st.sidebar.button("🗑️ Hapus Semua Tugas di Ruang Ini", type="primary", use_container_width=True):
         supabase.table("pending_tasks").delete().eq("user_id", user_nickname).eq("category", selected_ws).eq("status", "Pending").execute()
@@ -186,7 +176,7 @@ else:
 consultant = Agent(
     role='Lead Strategic Copilot',
     goal='Mendiagnosa masalah melalui percakapan chat yang tajam.',
-    backstory=f"Kamu adalah pakar strategi di ruang kerja {selected_ws}. Bicara seperti di WhatsApp/Slack. Gunakan 'Saya' dan 'Kamu'. Validasi jawaban user lalu ajukan 1-2 pertanyaan tajam yang benar-benar dibutuhkan untuk mendapatkan output maksimal.",
+    backstory=f"Kamu adalah pakar strategi di ruang kerja {selected_ws}. Bicara seperti sedang chat di WhatsApp (santai tapi berbobot). Gunakan 'Saya' dan 'Kamu'. Validasi jawaban user lalu ajukan 1 pertanyaan tajam. JANGAN panjang-panjang.",
     llm=llm_gemini
 )
 
@@ -196,8 +186,9 @@ architect = Agent(
     backstory="Susun laporan dengan bagian SKOR_FINAL dan ACTION_ITEMS. Untuk ACTION_ITEMS, WAJIB gunakan list dengan format: - **Nama Tugas**: Deskripsi.",
     llm=llm_gemini
 )
+
 # ==========================================
-# 5. MAIN UI (CHAT MODE & EXTRACTION)
+# 5. MAIN UI (REAL CHAT MODE)
 # ==========================================
 page = st.tabs([f"💬 {selected_ws} Chat", "📊 Analytics"])
 
@@ -205,66 +196,78 @@ with page[0]:
     # --- TAHAP 1: INPUT AWAL ---
     if st.session_state.audit_stage == 'input':
         st.markdown(f"## Ruang Kerja: {selected_ws}")
-        u_in = st.text_area("Apa tantangan/rencana yang ingin kita bedah hari ini?", height=100)
-        u_f = st.file_uploader("Lampirkan Data/Bukti (Opsional)", accept_multiple_files=True)
+        u_in = st.text_area("Mulai percakapan... Ceritakan tantangan atau rencanamu hari ini:", height=100)
         
-        if st.button("Mulai Diskusi 🚀", use_container_width=True):
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            u_f = st.file_uploader("Lampirkan Data/Bukti (Opsional)", accept_multiple_files=True)
+        with col2:
+            st.write("") 
+            st.write("")
+            # FITUR BARU: Toggle Memori
+            use_memory = st.checkbox("🧠 Hubungkan dengan laporan & tugas sebelumnya di ruang ini", value=False)
+        
+        if st.button("Kirim Pesan Pertama 🚀", use_container_width=True):
             if len(u_in) > 5:
-                with st.spinner("Mempersiapkan asisten..."):
+                with st.spinner("Mengetik..."):
                     st.session_state.start_time = time.time()
                     st.session_state.initial_evidence = process_vision(u_f)
                     st.session_state.initial_tasks = u_in
-                    st.session_state.memory_context = get_memory_context(user_nickname, selected_ws)
                     
-                    # Pertanyaan Pembuka AI
+                    # LOGIKA MEMORI OPSIONAL
+                    if use_memory:
+                        st.session_state.memory_context = get_memory_context(user_nickname, selected_ws)
+                    else:
+                        st.session_state.memory_context = "Abaikan data masa lalu. Anggap ini adalah topik yang 100% baru dan fokus pada masalah saat ini saja."
+                    
                     task_start = Task(
-                        description=f"Memori: {st.session_state.memory_context}. Masalah: {u_in}. Lampiran: {st.session_state.initial_evidence}. Sapa user dan berikan 1 pertanyaan pembuka yang cerdas.",
-                        agent=consultant, expected_output="Pesan sapaan dan pertanyaan."
+                        description=f"Konteks: {st.session_state.memory_context}. Pesan User: {u_in}. Lampiran: {st.session_state.initial_evidence}. Balas pesan user seperti teman chat, lalu ajukan 1 pertanyaan pembuka.",
+                        agent=consultant, expected_output="Pesan sapaan dan pertanyaan pendek."
                     )
                     reply = str(Crew(agents=[consultant], tasks=[task_start]).kickoff().raw)
                     
                     st.session_state.last_ai_q = reply
-                    st.session_state.ui_chat = [{"role": "assistant", "content": reply}]
+                    
+                    # PERBAIKAN UI CHAT: Pesan pertamamu langsung masuk jadi gelembung chat!
+                    st.session_state.ui_chat = [
+                        {"role": "user", "content": u_in},
+                        {"role": "assistant", "content": reply}
+                    ]
                     st.session_state.audit_stage, st.session_state.q_index = 'interrogation', 1
                     st.rerun()
 
     # --- TAHAP 2: INTERAKTIF CHAT ---
     elif st.session_state.audit_stage == 'interrogation':
-        # Gunakan container agar chat rapi dan bisa di-scroll secara natural
         chat_container = st.container()
         
-        # Tampilkan Histori Chat di dalam container
+        # Tampilkan histori dari awal (termasuk pesan pertamamu)
         with chat_container:
             for msg in st.session_state.ui_chat:
                 with st.chat_message(msg["role"]): 
                     st.markdown(msg["content"])
 
-        # Input Chat di bagian paling bawah
-        if prompt := st.chat_input("Balas pesan di sini..."):
-            # 1. Tampilkan pesan user ke UI
+        if prompt := st.chat_input("Ketik balasanmu di sini..."):
             st.session_state.ui_chat.append({"role": "user", "content": prompt})
             st.session_state.chat_history.append({"q": st.session_state.last_ai_q, "a": prompt})
             
-            # Cek apakah sudah batas pertanyaan
             if st.session_state.q_index >= 4:
                 st.session_state.audit_stage = 'report'
                 st.rerun()
             else:
                 st.session_state.q_index += 1
-                # 2. Tampilkan respon AI dengan efek loading yang rapi di dalam container
                 with chat_container:
                     with st.chat_message("assistant"):
-                        with st.spinner("Berpikir..."):
+                        with st.spinner("Mengetik..."):
                             hist_str = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
                             task_next = Task(
-                                description=f"Diskusi: {hist_str}. Lanjutkan dengan 1 pertanyaan tajam lagi untuk tahap {st.session_state.q_index}/4.",
-                                agent=consultant, expected_output="Pesan chat."
+                                description=f"Histori: {hist_str}. Balas secara natural, lalu lanjutkan dengan 1 pertanyaan tajam (Tahap {st.session_state.q_index}/4).",
+                                agent=consultant, expected_output="Pesan chat pendek."
                             )
                             reply = str(Crew(agents=[consultant], tasks=[task_next]).kickoff().raw)
                             st.markdown(reply)
                             st.session_state.last_ai_q = reply
                             st.session_state.ui_chat.append({"role": "assistant", "content": reply})
-                st.rerun() # Refresh agar kotak input bersih kembali
+                st.rerun()
 
     # --- TAHAP 3: LAPORAN & EKSTRAKSI (SUPER REGEX) ---
     elif st.session_state.audit_stage == 'report':
@@ -277,27 +280,18 @@ with page[0]:
                 )
                 res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
                 
-                # Simpan Skor ke DB
                 score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*([\d.]+)", res, re.IGNORECASE)
                 f_score = float(score_match.group(1)) if score_match else 5.0
                 supabase.table("audit_log").insert({"user_id": user_nickname, "category": selected_ws, "score": f_score, "audit_report": res}).execute()
                 
-                # ==========================================
-                # LOGIKA EKSTRAKSI TUGAS (ANTI-BOCOR)
-                # ==========================================
-                # 1. Menangkap semua pola list: [angka/strip/bintang] **Judul** [titik dua/strip] Deskripsi
                 tasks_found = re.findall(r"(?:^|\n)(?:\d+\.|\*|\-)\s*\*\*(.+?)\*\*\s*[:\-]?\s*(.+)", res)
-                
-                # 2. Jika AI lupa pakai list/bullet point, pakai pola cadangan
                 if not tasks_found:
                     tasks_found = re.findall(r"(?:^|\n)\*\*(.+?)\*\*\s*[:-]\s*(.+)", res)
 
-                # 3. Masukkan ke Database Pending Tasks
                 for title, desc in tasks_found:
                     clean_title = title.replace("**", "").strip()
                     clean_desc = desc.replace("**", "").strip()
                     
-                    # Validasi: Pastikan yang ditangkap benar-benar tugas, bukan sekadar sub-judul
                     if len(clean_title) > 3 and len(clean_desc) > 5 and "SKOR" not in clean_title.upper():
                         supabase.table("pending_tasks").insert({
                             "user_id": user_nickname, 
@@ -310,16 +304,12 @@ with page[0]:
                 st.session_state.data_saved = True
                 st.rerun()
 
-        # Menampilkan Laporan dari Cache
         st.markdown(st.session_state.report_cache)
-        
-        # Fitur PDF 
         st.download_button("📥 Download PDF Blueprint", 
                            data=generate_pdf(user_nickname, st.session_state.report_cache, st.session_state.score_cache), 
                            file_name=f"Audit_{selected_ws}_{datetime.now().strftime('%d%m')}.pdf",
                            use_container_width=True)
         
-        # Form Evaluasi Detail
         st.divider()
         st.subheader("📊 Evaluasi & Tutup Sesi")
         with st.form("evaluation_form"):
@@ -334,11 +324,7 @@ with page[0]:
             if st.form_submit_button("Kirim Analitik & Reset Sesi", use_container_width=True):
                 dur = (time.time() - st.session_state.start_time) / 60 if st.session_state.start_time else 0
                 words = len(str(st.session_state.chat_history).split())
-                
-                # Eksekusi fungsi simpan analitik
                 save_to_analytics(user_nickname, dur, acc, clr, readi, crit, words, selected_ws)
-                
-                # Reset State
                 for key in ['audit_stage', 'chat_history', 'ui_chat', 'data_saved', 'report_cache', 'score_cache']:
                     st.session_state[key] = 'input' if key == 'audit_stage' else ([] if 'chat' in key else (0.0 if key == 'score_cache' else False))
                 st.rerun()
