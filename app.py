@@ -334,9 +334,26 @@ with page[0]:
 # ==========================================
 with page[1]:
     st.title(f"📊 Dashboard: {selected_ws}")
+    
+    # Menarik data riwayat dari database
     res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).eq("category", selected_ws).execute()
+    
     if res_log.data:
         df = pd.DataFrame(res_log.data)
-        st.plotly_chart(px.line(df, x='created_at', y='score', markers=True, title="Trend Skor Strategi"), use_container_width=True)
+        
+        # 1. Menampilkan Grafik Garis
+        st.plotly_chart(px.line(df, x='created_at', y='score', markers=True, title="Trend Skor Strategi", range_y=[0, 10]), use_container_width=True)
+        
+        # 2. MENGEMBALIKAN TABEL PENCATATAN (Tampilan Rapi)
+        st.subheader("📝 Riwayat Pencatatan")
+        
+        # Merapikan tampilan tabel agar lebih enak dibaca
+        df_display = df.copy()
+        df_display['Tanggal'] = pd.to_datetime(df_display['created_at']).dt.strftime('%Y-%m-%d %H:%M')
+        df_display = df_display[['Tanggal', 'score', 'input_preview', 'audit_report']]
+        df_display.columns = ['Tanggal', 'Skor', 'Konteks Awal', 'Laporan Lengkap']
+        
+        st.dataframe(df_display.sort_values(by='Tanggal', ascending=False), use_container_width=True, hide_index=True)
+        
     else:
         st.info("Belum ada data untuk dianalisa di workspace ini.")
