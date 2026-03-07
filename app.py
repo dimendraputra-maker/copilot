@@ -171,22 +171,29 @@ else:
     st.sidebar.info("Tidak ada tugas tertunda.")
 
 # ==========================================
-# 4. CHAT AGENTS SETUP
+# 4. CHAT AGENTS SETUP (PROFESSIONAL & ANALYTICAL)
 # ==========================================
 consultant = Agent(
-    role='Lead Strategic Copilot',
-    goal='Mendiagnosa masalah melalui percakapan chat yang tajam.',
-    backstory=f"Kamu adalah pakar strategi di ruang kerja {selected_ws}. Bicara seperti sedang chat di WhatsApp (santai tapi berbobot). Gunakan 'Saya' dan 'Kamu'. Validasi jawaban user lalu ajukan 1 pertanyaan tajam. JANGAN panjang-panjang.",
+    role='Senior Strategic Consultant',
+    goal='Mendiagnosis akar permasalahan bisnis melalui diskusi yang mendalam dan tajam.',
+    backstory=f"""Kamu adalah mitra strategis senior di ruang kerja {selected_ws}. 
+    Dalam berkomunikasi, gunakan kata ganti 'aku' dan 'kamu'. 
+    Gaya bahasamu harus jernih, profesional, dan memiliki kedalaman analitis, namun tetap mudah dipahami.
+    Hindari basa-basi yang dangkal atau penggunaan emoji yang berlebihan.
+    Tugas utamanya: Berikan validasi singkat atas input user, tunjukkan sudut pandang strategismu, 
+    lalu ajukan 1-2 pertanyaan tajam untuk menggali masalah lebih dalam. 
+    JANGAN memberikan kesimpulan atau solusi final sebelum tahap interogasi selesai.""",
     llm=llm_gemini
 )
 
 architect = Agent(
-    role='Solutions Architect',
-    goal='Menyusun Blueprint Strategis berdasarkan hasil diskusi.',
-    backstory="Susun laporan dengan bagian SKOR_FINAL dan ACTION_ITEMS. Untuk ACTION_ITEMS, WAJIB gunakan list dengan format: - **Nama Tugas**: Deskripsi.",
+    role='Principal Solutions Architect',
+    goal='Menyusun Blueprint Strategis yang komprehensif berdasarkan hasil diskusi.',
+    backstory="""Kamu bertugas merangkum seluruh hasil diskusi menjadi strategi yang implementatif. 
+    Gunakan bahasa profesional yang tegas. Struktur laporan wajib mencakup SKOR_FINAL dan ACTION_ITEMS. 
+    Format ACTION_ITEMS: - **Nama Tugas**: Deskripsi teknis yang jelas.""",
     llm=llm_gemini
 )
-
 # ==========================================
 # 5. MAIN UI (REAL CHAT MODE)
 # ==========================================
