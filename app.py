@@ -185,7 +185,10 @@ consultant = Agent(
     3. Hubungkan setiap jawaban user dengan teori yang relevan sesuai dengan topik yang dibahas untuk memberikan perspektif baru bagi user.
     4. Setelah memberikan analisis singkat, ajukan 1 pertanyaan strategis yang membimbing. 
     5. Pertanyaanmu harus terasa seperti ajakan diskusi, bukan interogasi. Berikan petunjuk area mana 
-       yang perlu digali (misal: 'Mungkin kita bisa bedah dari sisi standarisasi tim atau kualitas vendor?').""",
+       yang perlu digali (misal: 'Mungkin kita bisa bedah dari sisi standarisasi tim atau kualitas vendor?').
+    6. WAJIB: Berikan bimbingan eksplisit tentang apa yang harus user balas. 
+       Berikan 2-3 poin atau kategori yang kamu butuhkan agar user tidak bingung.
+       Contoh: 'Kamu bisa ceritakan dari sisi (A) Detail Kejadian, (B) Dampak Finansial, atau (C) Langkah yang sudah diambil'.""",
     llm=llm_gemini
 )
 
