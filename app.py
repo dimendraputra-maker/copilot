@@ -353,35 +353,38 @@ with page[0]:
 with page[1]:
     st.title(f"📊 Dashboard Strategis: {selected_ws}")
     
-    # Tarik data dari Supabase
     res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).eq("category", selected_ws).execute()
     
     if res_log.data:
         df = pd.DataFrame(res_log.data)
-        # Konversi waktu ke format Datetime
-        df['created_at'] = pd.to_datetime(df['created_at'])
+        
+        # PERBAIKAN: Pastikan format waktu seragam (UTC Aware)
+        df['created_at'] = pd.to_datetime(df['created_at'], utc=True)
         df = df.sort_values('created_at')
 
-        # --- BAGIAN 1: METRIK UTAMA (BIG PICTURE) ---
+        # Jam sekarang versi UTC agar bisa dibandingkan
+        now_utc = pd.Timestamp.now(tz='UTC')
+        
+        # --- BAGIAN 1: METRIK UTAMA ---
         avg_total = df['score'].mean()
         
-        # Ambil data 7 hari terakhir & 30 hari terakhir untuk tren
-        last_week = df[df['created_at'] > (datetime.now() - pd.Timedelta(days=7))]
-        last_month = df[df['created_at'] > (datetime.now() - pd.Timedelta(days=30))]
+        # Filter data dengan zona waktu yang sama
+        last_week = df[df['created_at'] > (now_utc - pd.Timedelta(days=7))]
+        last_month = df[df['created_at'] > (now_utc - pd.Timedelta(days=30))]
         
         m_col1, m_col2, m_col3 = st.columns(3)
         with m_col1:
             st.metric("Rata-rata Skor Sesi", f"{avg_total:.1f}/10")
         with m_col2:
             val_w = last_week['score'].mean() if not last_week.empty else 0
-            st.metric("Performa Mingguan (7 Hari)", f"{val_w:.1f}/10")
+            st.metric("Performa Mingguan", f"{val_w:.1f}/10")
         with m_col3:
             val_m = last_month['score'].mean() if not last_month.empty else 0
-            st.metric("Performa Bulanan (30 Hari)", f"{val_m:.1f}/10")
+            st.metric("Performa Bulanan", f"{val_m:.1f}/10")
 
         st.divider()
 
-        # --- BAGIAN 2: GRAFIK TREN (INTERAKTIF) ---
+        # --- BAGIAN 2: GRAFIK TREN ---
         st.subheader("📈 Analisis Tren Waktu")
         tab_sesi, tab_minggu, tab_bulan = st.tabs(["Per Sesi", "Tren Mingguan", "Tren Bulanan"])
 
@@ -390,13 +393,13 @@ with page[1]:
                                    title="Skor Per Sesi Diskusi", range_y=[0,10]), use_container_width=True)
         
         with tab_minggu:
-            # Resampling data per minggu (W)
+            # Resampling per minggu
             df_weekly = df.set_index('created_at').resample('W').mean(numeric_only=True).reset_index()
             st.plotly_chart(px.area(df_weekly, x='created_at', y='score', markers=True, 
                                    title="Rata-rata Skor Mingguan", range_y=[0,10]), use_container_width=True)
 
         with tab_bulan:
-            # Resampling data per bulan (M)
+            # Resampling per bulan
             df_monthly = df.set_index('created_at').resample('M').mean(numeric_only=True).reset_index()
             st.plotly_chart(px.bar(df_monthly, x='created_at', y='score', 
                                    title="Rata-rata Skor Bulanan", range_y=[0,10]), use_container_width=True)
@@ -405,12 +408,14 @@ with page[1]:
         st.divider()
         st.subheader("📝 Riwayat Laporan Lengkap")
         df_display = df.copy()
-        df_display['Tanggal'] = df_display['created_at'].dt.strftime('%Y-%m-%d %H:%M')
-        df_display = df_display[['Tanggal', 'score', 'audit_report']]
+        
+        # Kembalikan ke waktu lokal hanya untuk tampilan tabel agar user tidak bingung
+        df_display['Waktu Lokal'] = df_display['created_at'].dt.tz_convert(None).dt.strftime('%Y-%m-%d %H:%M')
+        df_display = df_display[['Waktu Lokal', 'score', 'audit_report']]
         df_display.columns = ['Waktu Diskusi', 'Skor', 'Isi Laporan']
         
         st.dataframe(df_display.sort_values(by='Waktu Diskusi', ascending=False), 
                      use_container_width=True, hide_index=True)
 
     else:
-        st.info("Belum ada data yang cukup untuk melakukan analisa tren di ruang kerja ini.")
+        st.info("Belum ada data untuk dianalisa di ruang kerja ini.")
