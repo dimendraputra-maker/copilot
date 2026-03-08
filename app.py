@@ -46,6 +46,13 @@ def init_state():
 
 init_state()
 
+def get_task_stats(user_id, category):
+    res = supabase.table("pending_tasks").select("status").eq("user_id", user_id).eq("category", category).execute()
+    if not res.data: return 0, 0
+    total = len(res.data)
+    completed = len([t for t in res.data if t['status'] == 'Completed'])
+    return total, completed
+
 def save_to_analytics(nickname, duration, accuracy, clarity, readiness, critique, word_count, category):
     try:
         data = {
@@ -69,10 +76,9 @@ def get_memory_context(user_id, category):
     try:
         logs = supabase.table("audit_log").select("audit_report").eq("user_id", user_id).eq("category", category).order("created_at", desc=True).limit(2).execute()
         tasks = supabase.table("pending_tasks").select("task_name").eq("user_id", user_id).eq("category", category).eq("status", "Pending").execute()
-        
         mem = f"--- MEMORI WORKSPACE: {category} ---\n"
         if tasks.data:
-            mem += "TUGAS PENDING (Tanyakan jika relevan): " + ", ".join([t['task_name'] for t in tasks.data]) + "\n"
+            mem += "TUGAS PENDING: " + ", ".join([t['task_name'] for t in tasks.data]) + "\n"
         if logs.data:
             mem += "RINGKASAN SEBELUMNYA: " + logs.data[0]['audit_report'][:500] + "..."
         return mem
@@ -84,7 +90,7 @@ def process_vision(files):
     for f in files:
         try:
             img = Image.open(f)
-            res = vision_model.generate_content(["Ekstrak data strategis dan masalah dari gambar ini.", img])
+            res = vision_model.generate_content(["Ekstrak data strategis dan bukti fisik dari gambar ini.", img])
             descriptions.append(res.text)
         except: continue
     return " | ".join(descriptions)
@@ -188,7 +194,11 @@ consultant = Agent(
        yang perlu digali (misal: 'Mungkin kita bisa bedah dari sisi standarisasi tim atau kualitas vendor?').
     6. WAJIB: Berikan bimbingan eksplisit tentang apa yang harus user balas. 
        Berikan 2-3 poin atau kategori yang kamu butuhkan agar user tidak bingung.
-       Contoh: 'Kamu bisa ceritakan dari sisi (A) Detail Kejadian, (B) Dampak Finansial, atau (C) Langkah yang sudah diambil'.""",
+       Contoh: 'Kamu bisa ceritakan dari sisi (A) Detail Kejadian, (B) Dampak Finansial, atau (C) Langkah yang sudah diambil'.
+    
+    FITUR TAMBAHAN (PROGRESS TRACKING):
+    7. Jika 'memory_context' menunjukkan adanya histori tugas sebelumnya, kamu harus menanyakan progres nyata dan bukti (foto/angka). 
+       Jangan lanjut ke topik baru sebelum mengevaluasi apakah tugas lama sudah berdampak di dunia nyata.""",
     llm=llm_gemini
 )
 
@@ -199,72 +209,70 @@ architect = Agent(
     Struktur laporan wajib terdiri dari:
     1. SKOR_FINAL: (0-10)
     2. RINGKASAN_EKSEKUTIF: (Analisis mendalam terhadap situasi saat ini)
-    3. POTENSI_RISIKO: (Hal-hal yang harus diwaspadai user ke depannya)
-    4. ACTION_ITEMS: (Daftar tugas konkret dengan format: - **Nama Tugas**: Deskripsi strategis).
+    3. EVALUASI_PROGRESS_LAPANGAN: (Bedah keberhasilan atau kegagalan user dalam mengeksekusi tugas sebelumnya berdasarkan bukti yang diberikan).
+    4. POTENSI_RISIKO: (Hal-hal yang harus diwaspadai user ke depannya)
+    5. ACTION_ITEMS: (Daftar tugas konkret dengan format: - **Nama Tugas**: Deskripsi strategis).
     
     Gunakan bahasa profesional yang jernih dan tajam.""",
     llm=llm_gemini
 )
+
 # ==========================================
 # 5. MAIN UI (REAL CHAT MODE)
 # ==========================================
 page = st.tabs([f"💬 {selected_ws} Chat", "📊 Analytics"])
 
 with page[0]:
-    # --- TAHAP 1: INPUT AWAL ---
     if st.session_state.audit_stage == 'input':
         st.markdown(f"## Ruang Kerja: {selected_ws}")
+        
+        # Hitung histori laporan
+        rep_res = supabase.table("audit_log").select("id").eq("user_id", user_nickname).eq("category", selected_ws).execute()
+        report_count = len(rep_res.data) if rep_res.data else 0
+        
         u_in = st.text_area("Mulai percakapan... Ceritakan tantangan atau rencanamu hari ini:", height=100)
         
+        # Fitur Progress Dunia Nyata (Hanya jika laporan > 0)
+        u_prog = ""
+        if report_count > 0:
+            st.info("💡 Ada histori di ruang ini. Jika ini terkait tugas lama, ceritakan progres & buktinya.")
+            u_prog = st.text_area("Update Progress Dunia Nyata (Bukti/Angka):", placeholder="Contoh: Penjualan naik 10% setelah SOP dijalankan...")
+
         col1, col2 = st.columns([1, 1])
         with col1:
-            u_f = st.file_uploader("Lampirkan Data/Bukti (Opsional)", accept_multiple_files=True)
+            u_f = st.file_uploader("Lampirkan Bukti Foto/Data (Opsional)", accept_multiple_files=True)
         with col2:
-            st.write("") 
-            st.write("")
-            # FITUR BARU: Toggle Memori
-            use_memory = st.checkbox("🧠 Hubungkan dengan laporan & tugas sebelumnya di ruang ini", value=False)
+            use_memory = st.checkbox("🧠 Hubungkan dengan memori & tugas", value=(report_count > 0))
         
         if st.button("Kirim Pesan Pertama 🚀", use_container_width=True):
             if len(u_in) > 5:
-                with st.spinner("Mengetik..."):
+                with st.spinner("Menganalisis..."):
                     st.session_state.start_time = time.time()
                     st.session_state.initial_evidence = process_vision(u_f)
-                    st.session_state.initial_tasks = u_in
+                    combined_input = f"Input: {u_in}\nProgres Dunia Nyata: {u_prog}"
                     
-                    # LOGIKA MEMORI OPSIONAL
                     if use_memory:
                         st.session_state.memory_context = get_memory_context(user_nickname, selected_ws)
                     else:
-                        st.session_state.memory_context = "Abaikan data masa lalu. Anggap ini adalah topik yang 100% baru dan fokus pada masalah saat ini saja."
+                        st.session_state.memory_context = "Topik baru. Abaikan histori."
                     
                     task_start = Task(
-                        description=f"Konteks: {st.session_state.memory_context}. Pesan User: {u_in}. Lampiran: {st.session_state.initial_evidence}. Balas pesan user seperti teman chat, lalu ajukan 1 pertanyaan pembuka.",
-                        agent=consultant, expected_output="Pesan sapaan dan pertanyaan pendek."
+                        description=f"Konteks: {st.session_state.memory_context}. Input: {combined_input}. Bukti: {st.session_state.initial_evidence}. Balas analisis dan tanya 1 hal pembuka.",
+                        agent=consultant, expected_output="Respon mentor awal."
                     )
                     reply = str(Crew(agents=[consultant], tasks=[task_start]).kickoff().raw)
-                    
                     st.session_state.last_ai_q = reply
-                    
-                    # PERBAIKAN UI CHAT: Pesan pertamamu langsung masuk jadi gelembung chat!
-                    st.session_state.ui_chat = [
-                        {"role": "user", "content": u_in},
-                        {"role": "assistant", "content": reply}
-                    ]
+                    st.session_state.ui_chat = [{"role": "user", "content": u_in}, {"role": "assistant", "content": reply}]
                     st.session_state.audit_stage, st.session_state.q_index = 'interrogation', 1
                     st.rerun()
 
-    # --- TAHAP 2: INTERAKTIF CHAT ---
     elif st.session_state.audit_stage == 'interrogation':
         chat_container = st.container()
-        
-        # Tampilkan histori dari awal (termasuk pesan pertamamu)
         with chat_container:
             for msg in st.session_state.ui_chat:
-                with st.chat_message(msg["role"]): 
-                    st.markdown(msg["content"])
+                with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
-        if prompt := st.chat_input("Ketik balasanmu di sini..."):
+        if prompt := st.chat_input("Balas di sini..."):
             st.session_state.ui_chat.append({"role": "user", "content": prompt})
             st.session_state.chat_history.append({"q": st.session_state.last_ai_q, "a": prompt})
             
@@ -278,150 +286,76 @@ with page[0]:
                         with st.spinner("Mengetik..."):
                             hist_str = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
                             task_next = Task(
-                                description=f"Histori: {hist_str}. Balas secara natural, lalu lanjutkan dengan 1 pertanyaan tajam (Tahap {st.session_state.q_index}/4).",
+                                description=f"Histori: {hist_str}. Berikan analisis dan tanya 1 hal (Tahap {st.session_state.q_index}/4).",
                                 agent=consultant, expected_output="Pesan chat pendek."
                             )
                             reply = str(Crew(agents=[consultant], tasks=[task_next]).kickoff().raw)
-                            st.markdown(reply)
-                            st.session_state.last_ai_q = reply
+                            st.markdown(reply); st.session_state.last_ai_q = reply
                             st.session_state.ui_chat.append({"role": "assistant", "content": reply})
                 st.rerun()
 
-    # --- TAHAP 3: LAPORAN & EKSTRAKSI (SUPER REGEX) ---
     elif st.session_state.audit_stage == 'report':
         if not st.session_state.data_saved:
-            with st.spinner("Menyusun Blueprint Final & Mengekstrak Tugas..."):
+            with st.spinner("Finalisasi Strategi..."):
                 full_hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
                 task_fin = Task(
-                    description=f"Susun Blueprint dari chat ini: {full_hist}. WAJIB ada 'SKOR_FINAL: [angka]' dan daftar ACTION_ITEMS berformat list (misal: - **Tugas**: Penjelasan).", 
-                    agent=architect, expected_output="Laporan lengkap dengan SKOR_FINAL dan ACTION_ITEMS."
+                    description=f"Susun Blueprint dari chat: {full_hist}. Wajib ada SKOR_FINAL dan ACTION_ITEMS.", agent=architect, expected_output="Laporan Strategis."
                 )
                 res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
-                
                 score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*([\d.]+)", res, re.IGNORECASE)
                 f_score = float(score_match.group(1)) if score_match else 5.0
                 supabase.table("audit_log").insert({"user_id": user_nickname, "category": selected_ws, "score": f_score, "audit_report": res}).execute()
                 
                 tasks_found = re.findall(r"(?:^|\n)(?:\d+\.|\*|\-)\s*\*\*(.+?)\*\*\s*[:\-]?\s*(.+)", res)
-                if not tasks_found:
-                    tasks_found = re.findall(r"(?:^|\n)\*\*(.+?)\*\*\s*[:-]\s*(.+)", res)
-
                 for title, desc in tasks_found:
-                    clean_title = title.replace("**", "").strip()
-                    clean_desc = desc.replace("**", "").strip()
-                    
-                    if len(clean_title) > 3 and len(clean_desc) > 5 and "SKOR" not in clean_title.upper():
-                        supabase.table("pending_tasks").insert({
-                            "user_id": user_nickname, 
-                            "category": selected_ws, 
-                            "task_name": f"[{datetime.now().strftime('%d %b')}] {clean_title} | {clean_desc}", 
-                            "status": "Pending"
-                        }).execute()
+                    supabase.table("pending_tasks").insert({"user_id": user_nickname, "category": selected_ws, "task_name": f"[{datetime.now().strftime('%d %b')}] {title} | {desc}", "status": "Pending"}).execute()
                 
-                st.session_state.report_cache, st.session_state.score_cache = res, f_score
-                st.session_state.data_saved = True
+                st.session_state.report_cache, st.session_state.score_cache, st.session_state.data_saved = res, f_score, True
                 st.rerun()
 
         st.markdown(st.session_state.report_cache)
-        st.download_button("📥 Download PDF Blueprint", 
-                           data=generate_pdf(user_nickname, st.session_state.report_cache, st.session_state.score_cache), 
-                           file_name=f"Audit_{selected_ws}_{datetime.now().strftime('%d%m')}.pdf",
-                           use_container_width=True)
-        
-        st.divider()
-        st.subheader("📊 Evaluasi & Tutup Sesi")
-        with st.form("evaluation_form"):
-            col_a, col_b = st.columns(2)
-            with col_a:
-                acc = st.select_slider("Akurasi AI (1-5):", options=[1, 2, 3, 4, 5], value=4)
-                clr = st.select_slider("Kejelasan (1-5):", options=[1, 2, 3, 4, 5], value=4)
-            with col_b:
-                readi = st.radio("Kesiapan Eksekusi:", [1, 2, 3, 4, 5], horizontal=True)
-            crit = st.text_area("Masukan/Kritik untuk AI:")
-            
-            if st.form_submit_button("Kirim Analitik & Reset Sesi", use_container_width=True):
-                dur = (time.time() - st.session_state.start_time) / 60 if st.session_state.start_time else 0
-                words = len(str(st.session_state.chat_history).split())
-                save_to_analytics(user_nickname, dur, acc, clr, readi, crit, words, selected_ws)
-                for key in ['audit_stage', 'chat_history', 'ui_chat', 'data_saved', 'report_cache', 'score_cache']:
-                    st.session_state[key] = 'input' if key == 'audit_stage' else ([] if 'chat' in key else (0.0 if key == 'score_cache' else False))
-                st.rerun()
+        st.download_button("📥 Download PDF", data=generate_pdf(user_nickname, st.session_state.report_cache, st.session_state.score_cache), file_name=f"Audit_{selected_ws}.pdf", use_container_width=True)
+        if st.button("Reset Sesi"):
+            for key in ['audit_stage', 'chat_history', 'ui_chat', 'data_saved']: st.session_state[key] = 'input' if key == 'audit_stage' else ([] if 'chat' in key else False)
+            st.rerun()
 
 # ==========================================
-# 6. DASHBOARD (ANALISA MINGGUAN & BULANAN)
+# 6. DASHBOARD (GATED ANALYTICS)
 # ==========================================
 with page[1]:
     st.title(f"📊 Dashboard Strategis: {selected_ws}")
-    
     res_log = supabase.table("audit_log").select("*").eq("user_id", user_nickname).eq("category", selected_ws).execute()
     
     if res_log.data:
         df = pd.DataFrame(res_log.data)
-        
-        # PERBAIKAN: Pastikan format waktu seragam (UTC Aware)
         df['created_at'] = pd.to_datetime(df['created_at'], utc=True)
         df = df.sort_values('created_at')
-
-        # Jam sekarang versi UTC agar bisa dibandingkan
-        now_utc = pd.Timestamp.now(tz='UTC')
         
-        # --- BAGIAN 1: METRIK UTAMA ---
-        avg_total = df['score'].mean()
-        
-        # Filter data dengan zona waktu yang sama
-        last_week = df[df['created_at'] > (now_utc - pd.Timedelta(days=7))]
-        last_month = df[df['created_at'] > (now_utc - pd.Timedelta(days=30))]
+        # Gated Logic
+        data_span = (df['created_at'].max() - df['created_at'].min()).days
         
         m_col1, m_col2, m_col3 = st.columns(3)
-        with m_col1:
-            st.metric("Rata-rata Skor Sesi", f"{avg_total:.1f}/10")
+        with m_col1: st.metric("Rerata Skor", f"{df['score'].mean():.1f}/10")
         with m_col2:
-            val_w = last_week['score'].mean() if not last_week.empty else 0
-            st.metric("Performa Mingguan", f"{val_w:.1f}/10")
-        with m_col3:
-            val_m = last_month['score'].mean() if not last_month.empty else 0
-            st.metric("Performa Bulanan", f"{val_m:.1f}/10")
+            total, done = get_task_stats(user_nickname, selected_ws)
+            st.metric("Tugas Selesai", f"{done}/{total}")
+        with m_col3: st.metric("Total Sesi", len(df))
 
         st.divider()
-
-        # --- BAGIAN 2: GRAFIK TREN (VERSI PERBAIKAN LABEL) ---
         st.subheader("📈 Analisis Tren Waktu")
-        tab_sesi, tab_minggu, tab_bulan = st.tabs(["Per Sesi", "Tren Mingguan", "Tren Bulanan"])
+        t1, t2, t3 = st.tabs(["Per Sesi", "Mingguan (Locked)", "Bulanan (Locked)"])
 
-        with tab_sesi:
-            st.plotly_chart(px.line(df, x='created_at', y='score', markers=True, 
-                                   title="Skor Per Sesi Diskusi", range_y=[0,10]), use_container_width=True)
-        
-        with tab_minggu:
-            # Resampling per minggu
-            df_weekly = df.set_index('created_at').resample('W').mean(numeric_only=True).reset_index()
-            # PERBAIKAN: Ubah tanggal jadi teks agar label rapi (Contoh: "Week of 2026-03-30")
-            df_weekly['label_minggu'] = df_weekly['created_at'].dt.strftime('%d %b %Y')
-            
-            st.plotly_chart(px.bar(df_weekly, x='label_minggu', y='score', 
-                                   title="Rata-rata Skor Mingguan", range_y=[0,10]), use_container_width=True)
-
-        with tab_bulan:
-            # Resampling per bulan
-            df_monthly = df.set_index('created_at').resample('MS').mean(numeric_only=True).reset_index()
-            # PERBAIKAN: Ubah tanggal jadi teks (Contoh: "Mar 2026")
-            df_monthly['label_bulan'] = df_monthly['created_at'].dt.strftime('%b %Y')
-            
-            st.plotly_chart(px.bar(df_monthly, x='label_bulan', y='score', 
-                                   title="Rata-rata Skor Bulanan", range_y=[0,10]), use_container_width=True)
-
-        # --- BAGIAN 3: TABEL HISTORI ---
-        st.divider()
-        st.subheader("📝 Riwayat Laporan Lengkap")
-        df_display = df.copy()
-        
-        # Kembalikan ke waktu lokal hanya untuk tampilan tabel agar user tidak bingung
-        df_display['Waktu Lokal'] = df_display['created_at'].dt.tz_convert(None).dt.strftime('%Y-%m-%d %H:%M')
-        df_display = df_display[['Waktu Lokal', 'score', 'audit_report']]
-        df_display.columns = ['Waktu Diskusi', 'Skor', 'Isi Laporan']
-        
-        st.dataframe(df_display.sort_values(by='Waktu Diskusi', ascending=False), 
-                     use_container_width=True, hide_index=True)
-
+        with t1: st.plotly_chart(px.line(df, x='created_at', y='score', markers=True, range_y=[0,10]), use_container_width=True)
+        with t2:
+            if data_span >= 7:
+                df_w = df.set_index('created_at').resample('W').mean(numeric_only=True).reset_index()
+                st.plotly_chart(px.bar(df_w, x='created_at', y='score', range_y=[0,10]), use_container_width=True)
+                st.write(f"**Evaluasi:** Kamu menyelesaikan **{done}** tugas minggu ini.")
+            else: st.warning(f"🔒 Terkunci. Butuh 7 hari data. (Progress: {data_span}/7)")
+        with t3:
+            if data_span >= 30:
+                df_m = df.set_index('created_at').resample('MS').mean(numeric_only=True).reset_index()
+                st.plotly_chart(px.bar(df_m, x='created_at', y='score', range_y=[0,10]), use_container_width=True)
+            else: st.warning(f"🔒 Terkunci. Butuh 30 hari data. (Progress: {data_span}/30)")
     else:
-        st.info("Belum ada data untuk dianalisa di ruang kerja ini.")
+        st.info("Belum ada data.")
