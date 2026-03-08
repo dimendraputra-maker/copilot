@@ -384,7 +384,7 @@ with page[1]:
 
         st.divider()
 
-        # --- BAGIAN 2: GRAFIK TREN ---
+        # --- BAGIAN 2: GRAFIK TREN (VERSI PERBAIKAN LABEL) ---
         st.subheader("📈 Analisis Tren Waktu")
         tab_sesi, tab_minggu, tab_bulan = st.tabs(["Per Sesi", "Tren Mingguan", "Tren Bulanan"])
 
@@ -395,13 +395,19 @@ with page[1]:
         with tab_minggu:
             # Resampling per minggu
             df_weekly = df.set_index('created_at').resample('W').mean(numeric_only=True).reset_index()
-            st.plotly_chart(px.area(df_weekly, x='created_at', y='score', markers=True, 
+            # PERBAIKAN: Ubah tanggal jadi teks agar label rapi (Contoh: "Week of 2026-03-30")
+            df_weekly['label_minggu'] = df_weekly['created_at'].dt.strftime('%d %b %Y')
+            
+            st.plotly_chart(px.bar(df_weekly, x='label_minggu', y='score', 
                                    title="Rata-rata Skor Mingguan", range_y=[0,10]), use_container_width=True)
 
         with tab_bulan:
             # Resampling per bulan
-            df_monthly = df.set_index('created_at').resample('M').mean(numeric_only=True).reset_index()
-            st.plotly_chart(px.bar(df_monthly, x='created_at', y='score', 
+            df_monthly = df.set_index('created_at').resample('MS').mean(numeric_only=True).reset_index()
+            # PERBAIKAN: Ubah tanggal jadi teks (Contoh: "Mar 2026")
+            df_monthly['label_bulan'] = df_monthly['created_at'].dt.strftime('%b %Y')
+            
+            st.plotly_chart(px.bar(df_monthly, x='label_bulan', y='score', 
                                    title="Rata-rata Skor Bulanan", range_y=[0,10]), use_container_width=True)
 
         # --- BAGIAN 3: TABEL HISTORI ---
