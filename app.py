@@ -74,15 +74,19 @@ def get_user_workspaces(uid):
 
 def get_memory_context(user_id, category):
     try:
-        logs = supabase.table("audit_log").select("audit_report").eq("user_id", user_id).eq("category", category).order("created_at", desc=True).limit(2).execute()
+        # Menarik Master Summary terbaru dari ruang kerja
+        res_ws = supabase.table("user_workspaces").select("master_summary").eq("user_id", user_id).eq("workspace_name", category).execute()
+        master_summary = res_ws.data[0].get('master_summary', 'Belum ada memori.') if res_ws.data else 'Belum ada memori.'
+        
+        # Tetap menarik tugas pending agar tidak lupa dievaluasi
         tasks = supabase.table("pending_tasks").select("task_name").eq("user_id", user_id).eq("category", category).eq("status", "Pending").execute()
-        mem = f"--- MEMORI WORKSPACE: {category} ---\n"
+        
+        mem = f"--- MASTER SUMMARY WORKSPACE: {category} ---\n{master_summary}\n\n"
         if tasks.data:
             mem += "TUGAS PENDING: " + ", ".join([t['task_name'] for t in tasks.data]) + "\n"
-        if logs.data:
-            mem += "RINGKASAN SEBELUMNYA: " + logs.data[0]['audit_report'][:500] + "..."
         return mem
-    except: return "Belum ada histori."
+    except Exception as e: 
+        return "Belum ada memori."
 
 def process_vision(files):
     if not files: return ""
@@ -177,12 +181,12 @@ else:
     st.sidebar.info("Tidak ada tugas tertunda.")
 
 # ==========================================
-# 4. CHAT AGENTS SETUP (WISE BUSINESS MENTOR)
+# 4. CHAT AGENTS SETUP (WISE BUSINESS MENTOR & AUDITOR)
 # ==========================================
 consultant = Agent(
     role='Senior Business Mentor',
-    goal='Menganalisis tantangan bisnis dengan teori strategis dan membimbing user secara elegan.',
-    backstory=f"""Kamu adalah mentor bisnis senior yang bijaksana di ruang kerja {selected_ws}. 
+    goal='Menganalisis tantangan yang dimiliki user dengan teori strategis dan membimbing user secara elegan.',
+    backstory=f"""Kamu adalah mentor senior yang bijaksana sebagai teman diskusi {selected_ws}. 
     Dalam berkomunikasi, gunakan kata ganti 'aku' dan 'kamu' dengan nada yang profesional namun santai.
     
     ATURAN KOMUNIKASI:
@@ -198,22 +202,47 @@ consultant = Agent(
     
     FITUR TAMBAHAN (PROGRESS TRACKING):
     7. Jika 'memory_context' menunjukkan adanya histori tugas sebelumnya, kamu harus menanyakan progres nyata dan bukti (foto/angka). 
-       Jangan lanjut ke topik baru sebelum mengevaluasi apakah tugas lama sudah berdampak di dunia nyata.""",
+       Jangan lanjut ke topik baru sebelum mengevaluasi apakah tugas lama sudah berdampak di dunia nyata.
+    8. PENANGANAN TANPA BUKTI: Jika user mengklaim tugas selesai tapi TIDAK ADA BUKTI, jangan hukum/marahi, tapi berikan PERINGATAN RISIKO secara natural bahwa asumsi tanpa data bisa membahayakan strategi berikutnya.""",
+    llm=llm_gemini
+)
+
+# AGEN BARU: The Devil's Advocate (Skeptical Auditor)
+auditor = Agent(
+    role='Strategic Risk Auditor',
+    goal='Mencari titik buta (blind spots) dan asumsi tanpa bukti dari percakapan.',
+    backstory="""Kamu adalah 'Devil's Advocate'. Tugasmu bukan memberi solusi, melainkan mencari celah.
+    Baca riwayat diskusi dan temukan klaim user yang TIDAK didukung oleh bukti nyata atau angka.
+    Buat 'Nota Peringatan Risiko' yang objektif mengenai bahaya dari asumsi tersebut. Tandai tugas yang tak berbukti dengan label [Unverified].""",
     llm=llm_gemini
 )
 
 architect = Agent(
     role='Lead Solutions Architect',
-    goal='Menyusun Blueprint Strategis yang komprehensif, mencakup analisis risiko dan langkah konkret.',
-    backstory="""Kamu bertugas merangkum diskusi menjadi laporan strategis yang punya otoritas. 
-    Struktur laporan wajib terdiri dari:
-    1. SKOR_FINAL: (0-10)
-    2. RINGKASAN_EKSEKUTIF: (Analisis mendalam terhadap situasi saat ini)
-    3. EVALUASI_PROGRESS_LAPANGAN: (Bedah keberhasilan atau kegagalan user dalam mengeksekusi tugas sebelumnya berdasarkan bukti yang diberikan).
-    4. POTENSI_RISIKO: (Hal-hal yang harus diwaspadai user ke depannya)
-    5. ACTION_ITEMS: (Daftar tugas konkret dengan format: - **Nama Tugas**: Deskripsi strategis).
+    goal='Menyusun Blueprint Strategis dalam format JSON yang valid dan stabil.',
+    backstory="""Kamu bertugas merangkum diskusi dan temuan Auditor menjadi laporan strategis final.
     
-    Gunakan bahasa profesional yang jernih dan tajam.""",
+    [ATURAN WAJIB: STRICT JSON FORMAT]
+    Kamu HANYA BOLEH mengeluarkan output dalam format JSON di bawah ini. Jangan tambahkan teks apa pun di luar blok JSON ini:
+    {
+      "skor_final": 8.5,
+      "ringkasan_eksekutif": "Analisis mendalam...",
+      "evaluasi_progress_lapangan": "Bedah kemajuan user. Masukkan peringatan risiko dari Auditor di sini (Beri tanda ⚠️ jika ada klaim tanpa bukti).",
+      "potensi_risiko": ["Risiko 1", "Risiko 2"],
+      "action_items": [
+        {"judul": "Nama Tugas", "deskripsi": "Deskripsi tugas strategis"}
+      ]
+    }""",
+    llm=llm_gemini
+)
+# AGEN BARU: The Knowledge Archivist (Pengarsip Memori Jangka Panjang)
+archivist = Agent(
+    role='Chief Knowledge Officer',
+    goal='Memperbarui Master Summary (Buku Induk) ruang kerja agar AI tidak melupakan keputusan krusial masa lalu.',
+    backstory="""Kamu adalah pengarsip jenius. Tugasmu adalah menggabungkan 'Master Summary Lama' dengan 'Laporan Sesi Hari Ini'.
+    Buatlah ringkasan baru yang padat (maksimal 300 kata). 
+    Pertahankan keputusan strategis masa lalu, tambahkan perkembangan terbaru, dan buang obrolan basi yang sudah selesai.
+    Fokus pada: 1. Core Problem bisnis ini, 2. Strategi jangka panjang yang sudah disepakati, 3. Progres terbaru.""",
     llm=llm_gemini
 )
 
