@@ -252,16 +252,15 @@ archivist = Agent(
 page = st.tabs([f"💬 {selected_ws} Chat", "📊 Analytics"])
 
 with page[0]:
+    # --- TAHAP 1: INPUT AWAL ---
     if st.session_state.audit_stage == 'input':
         st.markdown(f"## Ruang Kerja: {selected_ws}")
         
-        # Hitung histori laporan
         rep_res = supabase.table("audit_log").select("id").eq("user_id", user_nickname).eq("category", selected_ws).execute()
         report_count = len(rep_res.data) if rep_res.data else 0
         
         u_in = st.text_area("Mulai percakapan... Ceritakan tantangan atau rencanamu hari ini:", height=100)
         
-        # Fitur Progress Dunia Nyata (Hanya jika laporan > 0)
         u_prog = ""
         if report_count > 0:
             st.info("💡 Ada histori di ruang ini. Jika ini terkait tugas lama, ceritakan progres & buktinya.")
@@ -295,15 +294,28 @@ with page[0]:
                     st.session_state.audit_stage, st.session_state.q_index = 'interrogation', 1
                     st.rerun()
 
+    # --- TAHAP 2: INTERAKTIF CHAT (DENGAN VISION) ---
     elif st.session_state.audit_stage == 'interrogation':
         chat_container = st.container()
         with chat_container:
             for msg in st.session_state.ui_chat:
                 with st.chat_message(msg["role"]): st.markdown(msg["content"])
 
+        u_f_interrogation = st.file_uploader("📎 Lampirkan Bukti Gambar (Opsional)", accept_multiple_files=True, key=f"uploader_{st.session_state.q_index}")
+
         if prompt := st.chat_input("Balas di sini..."):
+            
+            evidence_text = ""
+            if u_f_interrogation:
+                with st.spinner("Mengekstrak data dari gambar..."):
+                    evidence_text = process_vision(u_f_interrogation)
+            
+            combined_prompt = prompt
+            if evidence_text:
+                combined_prompt += f"\n\n[BUKTI VISUAL TERLAMPIR]: {evidence_text}"
+
             st.session_state.ui_chat.append({"role": "user", "content": prompt})
-            st.session_state.chat_history.append({"q": st.session_state.last_ai_q, "a": prompt})
+            st.session_state.chat_history.append({"q": st.session_state.last_ai_q, "a": combined_prompt})
             
             if st.session_state.q_index >= 4:
                 st.session_state.audit_stage = 'report'
@@ -312,10 +324,10 @@ with page[0]:
                 st.session_state.q_index += 1
                 with chat_container:
                     with st.chat_message("assistant"):
-                        with st.spinner("Mengetik..."):
+                        with st.spinner("Menganalisis balasan & bukti..."):
                             hist_str = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
                             task_next = Task(
-                                description=f"Histori: {hist_str}. Berikan analisis dan tanya 1 hal (Tahap {st.session_state.q_index}/4).",
+                                description=f"Histori: {hist_str}. Evaluasi [BUKTI VISUAL TERLAMPIR] jika ada. Berikan analisis tajam dan tanya 1 hal (Tahap {st.session_state.q_index}/4).",
                                 agent=consultant, expected_output="Pesan chat pendek."
                             )
                             reply = str(Crew(agents=[consultant], tasks=[task_next]).kickoff().raw)
@@ -323,33 +335,77 @@ with page[0]:
                             st.session_state.ui_chat.append({"role": "assistant", "content": reply})
                 st.rerun()
 
+    # --- TAHAP 3: LAPORAN, JSON PARSER & ROLLING MEMORY ---
     elif st.session_state.audit_stage == 'report':
         if not st.session_state.data_saved:
-            with st.spinner("Finalisasi Strategi..."):
+            with st.spinner("Melakukan Audit & Menyusun Blueprint Strategis..."):
                 full_hist = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
-                task_fin = Task(
-                    description=f"Susun Blueprint dari chat: {full_hist}. Wajib ada SKOR_FINAL dan ACTION_ITEMS.", agent=architect, expected_output="Laporan Strategis."
+                
+                task_audit = Task(
+                    description=f"Analisa riwayat chat: {full_hist}. Buat nota peringatan untuk klaim yang tidak punya bukti.",
+                    agent=auditor, expected_output="Nota peringatan risiko."
                 )
-                res = str(Crew(agents=[architect], tasks=[task_fin]).kickoff().raw)
-                score_match = re.search(r"SKOR_FINAL\s*[:=-]?\s*([\d.]+)", res, re.IGNORECASE)
-                f_score = float(score_match.group(1)) if score_match else 5.0
-                supabase.table("audit_log").insert({"user_id": user_nickname, "category": selected_ws, "score": f_score, "audit_report": res}).execute()
                 
-                tasks_found = re.findall(r"(?:^|\n)(?:\d+\.|\*|\-)\s*\*\*(.+?)\*\*\s*[:\-]?\s*(.+)", res)
-                for title, desc in tasks_found:
-                    supabase.table("pending_tasks").insert({"user_id": user_nickname, "category": selected_ws, "task_name": f"[{datetime.now().strftime('%d %b')}] {title} | {desc}", "status": "Pending"}).execute()
+                task_fin = Task(
+                    description=f"Gunakan riwayat chat dan nota Auditor. Susun Blueprint WAJIB format JSON.", 
+                    agent=architect, expected_output="Strict JSON format."
+                )
                 
-                st.session_state.report_cache, st.session_state.score_cache, st.session_state.data_saved = res, f_score, True
+                res = str(Crew(agents=[auditor, architect], tasks=[task_audit, task_fin]).kickoff().raw)
+                
+                try:
+                    json_match = re.search(r'\{.*\}', res, re.DOTALL)
+                    json_str = json_match.group() if json_match else res
+                    data = json.loads(json_str)
+                    
+                    f_score = float(data.get("skor_final", 5.0))
+                    
+                    md_report = f"### SKOR_FINAL: {f_score}\n\n"
+                    md_report += f"**RINGKASAN_EKSEKUTIF:**\n{data.get('ringkasan_eksekutif', '')}\n\n"
+                    md_report += f"**EVALUASI_PROGRESS_LAPANGAN:**\n{data.get('evaluasi_progress_lapangan', '')}\n\n"
+                    md_report += "**POTENSI_RISIKO:**\n" + "\n".join([f"- {r}" for r in data.get('potensi_risiko', [])]) + "\n\n"
+                    md_report += "**ACTION_ITEMS:**\n"
+                    
+                    for task in data.get("action_items", []):
+                        t_title = task.get("judul", "Tugas")
+                        t_desc = task.get("deskripsi", "")
+                        md_report += f"- **{t_title}**: {t_desc}\n"
+                        
+                        supabase.table("pending_tasks").insert({
+                            "user_id": user_nickname, 
+                            "category": selected_ws, 
+                            "task_name": f"[{datetime.now().strftime('%d %b')}] {t_title} | {t_desc}", 
+                            "status": "Pending"
+                        }).execute()
+                    
+                    # --- ROLLING MASTER SUMMARY ---
+                    old_mem_res = supabase.table("user_workspaces").select("master_summary").eq("user_id", user_nickname).eq("workspace_name", selected_ws).execute()
+                    old_summary = old_mem_res.data[0].get('master_summary', '') if old_mem_res.data else ""
+                    
+                    task_archive = Task(
+                        description=f"Memori Lama: {old_summary}\n\nLaporan Baru: {json_str}\n\nGabungkan menjadi 1 Master Summary baru (maks 300 kata).",
+                        agent=archivist, expected_output="Teks paragraf Master Summary yang baru."
+                    )
+                    new_summary = str(Crew(agents=[archivist], tasks=[task_archive]).kickoff().raw)
+                    
+                    supabase.table("user_workspaces").update({"master_summary": new_summary}).eq("user_id", user_nickname).eq("workspace_name", selected_ws).execute()
+                    
+                except Exception as e:
+                    f_score = 5.0
+                    md_report = f"**Sistem Peringatan: Format JSON Gagal. Error: {str(e)}**\n\n{res}"
+                
+                supabase.table("audit_log").insert({"user_id": user_nickname, "category": selected_ws, "score": f_score, "audit_report": md_report}).execute()
+                
+                st.session_state.report_cache, st.session_state.score_cache, st.session_state.data_saved = md_report, f_score, True
                 st.rerun()
 
         st.markdown(st.session_state.report_cache)
         st.download_button("📥 Download PDF", data=generate_pdf(user_nickname, st.session_state.report_cache, st.session_state.score_cache), file_name=f"Audit_{selected_ws}.pdf", use_container_width=True)
-        if st.button("Reset Sesi"):
+        if st.button("Tutup Sesi & Reset"):
             for key in ['audit_stage', 'chat_history', 'ui_chat', 'data_saved']: st.session_state[key] = 'input' if key == 'audit_stage' else ([] if 'chat' in key else False)
             st.rerun()
-
 # ==========================================
-# 6. DASHBOARD (GATED ANALYTICS)
+# 6. DASHBOARD (GATED ANALYTICS) 
 # ==========================================
 with page[1]:
     st.title(f"📊 Dashboard Strategis: {selected_ws}")
