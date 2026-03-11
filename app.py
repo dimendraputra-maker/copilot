@@ -451,11 +451,16 @@ with page[1]:
     if res_log.data:
         df = pd.DataFrame(res_log.data)
         df['created_at'] = pd.to_datetime(df['created_at'], utc=True)
-        df = df.sort_values('created_at')
+        
+        # Urutkan untuk Grafik (Lama ke Baru)
+        df_sorted_asc = df.sort_values('created_at') 
+        # Urutkan untuk Card UI (Baru ke Lama)
+        df_sorted_desc = df.sort_values('created_at', ascending=False)
         
         # Gated Logic
         data_span = (df['created_at'].max() - df['created_at'].min()).days
         
+        # --- BAGIAN METRIK (TIDAK DIUBAH) ---
         m_col1, m_col2, m_col3 = st.columns(3)
         with m_col1: st.metric("Rerata Skor", f"{df['score'].mean():.1f}/10")
         with m_col2:
@@ -463,21 +468,73 @@ with page[1]:
             st.metric("Tugas Selesai", f"{done}/{total}")
         with m_col3: st.metric("Total Sesi", len(df))
 
+        # --- BAGIAN GRAFIK (TIDAK DIUBAH) ---
         st.divider()
         st.subheader("📈 Analisis Tren Waktu")
         t1, t2, t3 = st.tabs(["Per Sesi", "Mingguan (Locked)", "Bulanan (Locked)"])
 
-        with t1: st.plotly_chart(px.line(df, x='created_at', y='score', markers=True, range_y=[0,10]), use_container_width=True)
+        with t1: st.plotly_chart(px.line(df_sorted_asc, x='created_at', y='score', markers=True, range_y=[0,10]), use_container_width=True)
         with t2:
             if data_span >= 7:
-                df_w = df.set_index('created_at').resample('W').mean(numeric_only=True).reset_index()
+                df_w = df_sorted_asc.set_index('created_at').resample('W').mean(numeric_only=True).reset_index()
                 st.plotly_chart(px.bar(df_w, x='created_at', y='score', range_y=[0,10]), use_container_width=True)
                 st.write(f"**Evaluasi:** Kamu menyelesaikan **{done}** tugas minggu ini.")
             else: st.warning(f"🔒 Terkunci. Butuh 7 hari data. (Progress: {data_span}/7)")
         with t3:
             if data_span >= 30:
-                df_m = df.set_index('created_at').resample('MS').mean(numeric_only=True).reset_index()
+                df_m = df_sorted_asc.set_index('created_at').resample('MS').mean(numeric_only=True).reset_index()
                 st.plotly_chart(px.bar(df_m, x='created_at', y='score', range_y=[0,10]), use_container_width=True)
             else: st.warning(f"🔒 Terkunci. Butuh 30 hari data. (Progress: {data_span}/30)")
+            
+        # ==========================================
+        # TAMBAHAN: RIWAYAT EVALUASI (CARD UI)
+        # ==========================================
+        st.divider()
+        st.subheader("📝 Riwayat Evaluasi (Card View)")
+        
+        # Ubah dataframe menjadi bentuk dictionary agar mudah dilooping
+        records = df_sorted_desc.to_dict('records')
+        
+        for rec in records:
+            with st.container(border=True):
+                col_teks, col_skor = st.columns([3, 1])
+                
+                with col_teks:
+                    tanggal = rec['created_at'].strftime("%d %b %Y, %H:%M")
+                    st.markdown(f"#### 🏢 {rec.get('category', selected_ws)} | 📅 {tanggal}")
+                    
+                    # Membaca kolom ringkasan (ditangani agar aman dari data kosong)
+                    ringkasan = rec.get('ringkasan_eksekutif', 'Tidak ada ringkasan yang tersimpan.')
+                    if pd.isna(ringkasan): ringkasan = 'Tidak ada ringkasan yang tersimpan.'
+                    st.write(f"*{ringkasan}*")
+                
+                with col_skor:
+                    # Menggunakan 'score' sesuai nama kolom database-mu
+                    skor = rec.get('score', 0)
+                    st.metric(label="Skor Audit", value=f"{skor}/10")
+                
+                with st.expander("🔍 Lihat Detail Risiko & Temuan"):
+                    st.markdown("**⚠️ Potensi Risiko:**")
+                    risiko = rec.get('potensi_risiko', [])
+                    
+                    # Logika cerdas: Jika risiko berbentuk list, tampilkan berjejer
+                    if isinstance(risiko, list):
+                        for r in risiko:
+                            st.markdown(f"- {r}")
+                    elif isinstance(risiko, str) and risiko.startswith('['):
+                        try:
+                            import json
+                            for r in json.loads(risiko): st.markdown(f"- {r}")
+                        except:
+                            st.write(risiko)
+                    else:
+                        val = "Tidak ada catatan risiko." if pd.isna(risiko) else risiko
+                        st.write(val)
+                        
+                    st.markdown("**📋 Evaluasi Lapangan:**")
+                    evaluasi = rec.get('evaluasi_progress_lapangan', 'Tidak ada catatan.')
+                    val_eval = "Tidak ada catatan detail lapangan." if pd.isna(evaluasi) else evaluasi
+                    st.info(val_eval)
+
     else:
         st.info("Belum ada data.")
