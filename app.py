@@ -135,20 +135,42 @@ if st.session_state.current_user is None:
 user_nickname = st.session_state.current_user
 
 # ==========================================
-# 3. SIDEBAR (DYNAMIC WORKSPACE & TASKS)
+# SIDEBAR: MENAMPILKAN TUGAS TERTUNDA (ANTI-AMNESIA)
 # ==========================================
-st.sidebar.title(f"👤 {user_nickname}")
+st.sidebar.markdown("---")
+st.sidebar.markdown(f"### 📋 Action Items: {selected_ws}")
 
-st.sidebar.markdown("### 📁 Create New Workspace")
-new_ws_input = st.sidebar.text_input("Nama Ruang Kerja Baru:")
-if st.sidebar.button("Tambah & Pindah", use_container_width=True):
-    if new_ws_input:
-        try:
-            supabase.table("user_workspaces").insert({"user_id": user_nickname, "workspace_name": new_ws_input}).execute()
-            st.session_state.active_workspace = new_ws_input
-            st.session_state.audit_stage = 'input' 
-            st.rerun()
-        except: st.sidebar.error("Nama sudah ada.")
+try:
+    # 1. Tarik SEMUA data tugas untuk user dan workspace ini (tanpa filter status dulu)
+    res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("category", selected_ws).execute()
+    
+    # 2. Filter menggunakan kecerdasan Python (Tangkap 'Pending', 'NULL', atau 'False')
+    pending_tasks = []
+    if res_tasks.data:
+        for t in res_tasks.data:
+            # Jika statusnya Pending, ATAU completed-nya NULL (None), ATAU completed-nya False
+            if t.get('status') == 'Pending' or t.get('completed') is None or t.get('completed') is False:
+                pending_tasks.append(t)
+    
+    # 3. Tampilkan di layar jika ada tugas yang lolos filter
+    if pending_tasks:
+        for t in pending_tasks:
+            # Gunakan st.sidebar.checkbox agar bisa dicentang
+            is_done = st.sidebar.checkbox(t.get('task_name', 'Tugas Tanpa Nama'), key=f"task_{t['id']}")
+            
+            # Jika user mencentang tugas
+            if is_done:
+                # Update KEDUA kolom sekaligus agar database-mu tetap rapi
+                supabase.table("pending_tasks").update({
+                    "status": "Done", 
+                    "completed": True
+                }).eq("id", t['id']).execute()
+                st.rerun() # Refresh layar
+    else:
+        st.sidebar.info("🎉 Bersih! Tidak ada tugas tertunda.")
+
+except Exception as e:
+    st.sidebar.error(f"Gagal memuat tugas: {e}")
 
 available_ws = get_user_workspaces(user_nickname)
 selected_ws = st.sidebar.selectbox("Pilih Ruang Kerja Aktif:", available_ws, index=available_ws.index(st.session_state.active_workspace) if st.session_state.active_workspace in available_ws else 0)
