@@ -447,9 +447,40 @@ with page[0]:
                 st.rerun()
 
         st.markdown(st.session_state.report_cache)
+        st.markdown(st.session_state.report_cache)
         st.download_button("📥 Download PDF", data=generate_pdf(user_nickname, st.session_state.report_cache, st.session_state.score_cache), file_name=f"Audit_{selected_ws}.pdf", use_container_width=True)
-        if st.button("Tutup Sesi & Reset"):
-            for key in ['audit_stage', 'chat_history', 'ui_chat', 'data_saved']: st.session_state[key] = 'input' if key == 'audit_stage' else ([] if 'chat' in key else False)
+        
+        # ==========================================
+        # FITUR KEPUASAN USER (FEEDBACK FORM)
+        # ==========================================
+        st.markdown("---")
+        st.markdown("### ⭐ Seberapa berguna audit ini untukmu?")
+        
+        with st.form("feedback_form"):
+            rating = st.slider("Berikan Nilai (1 = Sangat Buruk, 5 = Sangat Membantu)", min_value=1, max_value=5, value=5)
+            komentar = st.text_area("Ada masukan atau keluhan tentang AI Consultant ini? (Opsional)")
+            submit_feedback = st.form_submit_button("Kirim Penilaian", type="primary")
+            
+            if submit_feedback:
+                try:
+                    supabase.table("user_feedback").insert({
+                        "user_id": user_nickname,
+                        "workspace": selected_ws,
+                        "rating": rating,
+                        "comment": komentar,
+                        "created_at": datetime.now().isoformat()
+                    }).execute()
+                    st.success("Terima kasih atas penilaianmu! 🙏 Feedback ini membantu AI menjadi lebih pintar.")
+                except Exception as e:
+                    st.error(f"Gagal menyimpan feedback: {e}")
+        
+        # SATU TOMBOL RESET YANG RAPI DI PALING BAWAH
+        if st.button("🔄 Mulai Sesi Audit Baru", type="secondary", use_container_width=True):
+            for key in ['audit_stage', 'chat_history', 'ui_chat', 'data_saved', 'q_index']: 
+                if key == 'audit_stage': st.session_state[key] = 'input'
+                elif key == 'q_index': st.session_state[key] = 0
+                elif key == 'data_saved': st.session_state[key] = False
+                else: st.session_state[key] = []
             st.rerun()
 # ==========================================
 # 6. DASHBOARD (GATED ANALYTICS) 
