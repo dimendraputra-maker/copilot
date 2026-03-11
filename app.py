@@ -135,46 +135,14 @@ if st.session_state.current_user is None:
 user_nickname = st.session_state.current_user
 
 # ==========================================
-# SIDEBAR: MENAMPILKAN TUGAS TERTUNDA (ANTI-AMNESIA)
+# SIDEBAR: WORKSPACE & ACTION ITEMS
 # ==========================================
-st.sidebar.markdown("---")
-st.sidebar.markdown(f"### 📋 Action Items: {selected_ws}")
 
-try:
-    # 1. Tarik SEMUA data tugas untuk user dan workspace ini (tanpa filter status dulu)
-    res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("category", selected_ws).execute()
-    
-    # 2. Filter menggunakan kecerdasan Python (Tangkap 'Pending', 'NULL', atau 'False')
-    pending_tasks = []
-    if res_tasks.data:
-        for t in res_tasks.data:
-            # Jika statusnya Pending, ATAU completed-nya NULL (None), ATAU completed-nya False
-            if t.get('status') == 'Pending' or t.get('completed') is None or t.get('completed') is False:
-                pending_tasks.append(t)
-    
-    # 3. Tampilkan di layar jika ada tugas yang lolos filter
-    if pending_tasks:
-        for t in pending_tasks:
-            # Gunakan st.sidebar.checkbox agar bisa dicentang
-            is_done = st.sidebar.checkbox(t.get('task_name', 'Tugas Tanpa Nama'), key=f"task_{t['id']}")
-            
-            # Jika user mencentang tugas
-            if is_done:
-                # Update KEDUA kolom sekaligus agar database-mu tetap rapi
-                supabase.table("pending_tasks").update({
-                    "status": "Done", 
-                    "completed": True
-                }).eq("id", t['id']).execute()
-                st.rerun() # Refresh layar
-    else:
-        st.sidebar.info("🎉 Bersih! Tidak ada tugas tertunda.")
-
-except Exception as e:
-    st.sidebar.error(f"Gagal memuat tugas: {e}")
-
+# 1. PILIH WORKSPACE DULU (Ini harus di atas agar tidak NameError)
 available_ws = get_user_workspaces(user_nickname)
 selected_ws = st.sidebar.selectbox("Pilih Ruang Kerja Aktif:", available_ws, index=available_ws.index(st.session_state.active_workspace) if st.session_state.active_workspace in available_ws else 0)
 
+# 2. HANDLE PERUBAHAN WORKSPACE
 if selected_ws != st.session_state.active_workspace:
     st.session_state.active_workspace = selected_ws
     st.session_state.audit_stage = 'input'
@@ -182,26 +150,55 @@ if selected_ws != st.session_state.active_workspace:
     st.session_state.chat_history = []
     st.rerun()
 
+# 3. TAMPILKAN TUGAS TERTUNDA
 st.sidebar.markdown("---")
-st.sidebar.markdown(f"### 📋 Tasks: {selected_ws}")
+st.sidebar.markdown(f"### 📋 Action Items: {selected_ws}")
 
-res_t = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("category", selected_ws).eq("status", "Pending").order("created_at", desc=True).execute()
-
-if res_t.data:
-    for t in res_t.data:
-        parts = t['task_name'].split("|")
-        with st.sidebar.expander(f"📌 {parts[0].strip()}"):
-            st.write(parts[1].strip() if len(parts) > 1 else "Segera kerjakan.")
-            if st.button("✅ Selesai", key=f"done_{t['id']}", use_container_width=True):
-                supabase.table("pending_tasks").update({"status": "Completed", "completed_at": datetime.now().isoformat()}).eq("id", t['id']).execute()
-                st.rerun()
+try:
+    # Tarik SEMUA data tugas untuk user dan workspace ini
+    res_tasks = supabase.table("pending_tasks").select("*").eq("user_id", user_nickname).eq("category", selected_ws).execute()
     
-    st.sidebar.markdown("---")
-    if st.sidebar.button("🗑️ Hapus Semua Tugas di Ruang Ini", type="primary", use_container_width=True):
-        supabase.table("pending_tasks").delete().eq("user_id", user_nickname).eq("category", selected_ws).eq("status", "Pending").execute()
-        st.rerun()
-else:
-    st.sidebar.info("Tidak ada tugas tertunda.")
+    # Filter Cerdas (Tangkap 'Pending', 'NULL', atau 'False')
+    pending_tasks = []
+    if res_tasks.data:
+        for t in res_tasks.data:
+            if t.get('status') == 'Pending' or t.get('completed') is None or t.get('completed') is False:
+                pending_tasks.append(t)
+    
+    # Render UI jika ada tugas
+    if pending_tasks:
+        for t in pending_tasks:
+            # Format UI lamamu yang memisahkan Judul dan Deskripsi
+            parts = t.get('task_name', 'Tugas Tanpa Nama').split("|")
+            judul = parts[0].strip()
+            deskripsi = parts[1].strip() if len(parts) > 1 else "Segera kerjakan."
+            
+            with st.sidebar.expander(f"📌 {judul}"):
+                st.write(deskripsi)
+                
+                # Tombol Selesai
+                if st.button("✅ Selesai", key=f"done_{t['id']}", use_container_width=True):
+                    # Update database agar super rapi (status dan completed diubah barengan)
+                    supabase.table("pending_tasks").update({
+                        "status": "Completed", 
+                        "completed": True,
+                        "completed_at": datetime.now().isoformat()
+                    }).eq("id", t['id']).execute()
+                    st.rerun()
+        
+        # Tombol Hapus Semua Tugas
+        st.sidebar.markdown("---")
+        if st.sidebar.button("🗑️ Hapus Semua Tugas di Ruang Ini", type="primary", use_container_width=True):
+            # Hapus berdasarkan ID tugas yang tampil saja agar aman
+            for task_to_delete in pending_tasks:
+                supabase.table("pending_tasks").delete().eq("id", task_to_delete['id']).execute()
+            st.rerun()
+            
+    else:
+        st.sidebar.info("🎉 Bersih! Tidak ada tugas tertunda.")
+
+except Exception as e:
+    st.sidebar.error(f"Gagal memuat tugas: {e}")
 
 # ==========================================
 # 4. CHAT AGENTS SETUP (WISE BUSINESS MENTOR & AUDITOR)
