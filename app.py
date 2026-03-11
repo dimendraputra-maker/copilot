@@ -363,18 +363,20 @@ with page[0]:
                     with st.chat_message("assistant"):
                         with st.spinner("Menganalisis balasan & bukti..."):
                             hist_str = "\n".join([f"Q: {h['q']}\nA: {h['a']}" for h in st.session_state.chat_history])
+                            
                             # 1. Buat instruksi visual yang dinamis (Cerdas mengecek ada foto atau tidak)
-if evidence_text and evidence_text.strip() != "":
-    vision_instruction = f"Terdapat [BUKTI VISUAL TERLAMPIR]: {evidence_text}. Tolong evaluasi gambar tersebut karena sangat penting."
-else:
-    vision_instruction = "PERINGATAN KERAS: User TIDAK melampirkan gambar/visual apa pun. JANGAN PERNAH menyinggung, membahas, atau menagih soal foto/desain/gambar/visual di balasanmu."
+                            if evidence_text and evidence_text.strip() != "":
+                                vision_instruction = f"Terdapat [BUKTI VISUAL TERLAMPIR]: {evidence_text}. Tolong evaluasi gambar tersebut karena sangat penting."
+                            else:
+                                vision_instruction = "PERINGATAN KERAS: User TIDAK melampirkan gambar/visual apa pun. JANGAN PERNAH menyinggung, membahas, atau menagih soal foto/desain/gambar/visual di balasanmu."
 
-# 2. Masukkan instruksi dinamis itu ke dalam Task
-task_next = Task(
-    description=f"Histori percakapan: {hist_str}.\n\n{vision_instruction}\n\nBerikan analisis tajam, serang kelemahan asumsi user, dan akhiri dengan bertanya 1 hal spesifik (Tahap {st.session_state.q_index}/4).",
-    agent=consultant,
-    expected_output="Balasan chat singkat, tajam, dan langsung pada intinya."
-)
+                            # 2. Masukkan instruksi dinamis itu ke dalam Task
+                            task_next = Task(
+                                description=f"Histori percakapan: {hist_str}.\n\n{vision_instruction}\n\nBerikan analisis tajam, serang kelemahan asumsi user, dan akhiri dengan bertanya 1 hal spesifik (Tahap {st.session_state.q_index}/4).",
+                                agent=consultant,
+                                expected_output="Balasan chat singkat, tajam, dan langsung pada intinya."
+                            )
+                            
                             reply = str(Crew(agents=[consultant], tasks=[task_next]).kickoff().raw)
                             st.markdown(reply); st.session_state.last_ai_q = reply
                             st.session_state.ui_chat.append({"role": "assistant", "content": reply})
