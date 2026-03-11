@@ -238,23 +238,40 @@ auditor = Agent(
 )
 
 architect = Agent(
-    role='Lead Solutions Architect',
-    goal='Menyusun Blueprint Strategis dalam format JSON yang valid dan stabil.',
-    backstory="""Kamu bertugas merangkum diskusi dan temuan Auditor menjadi laporan strategis final.
+    role='Lead Solutions Architect & Strict Scorer',
+    goal='Menyusun Blueprint Strategis dalam format JSON yang valid berdasarkan temuan Auditor.',
+    backstory="""Kamu adalah arsitek bisnis senior yang merangkum temuan Auditor menjadi laporan final. Kamu SANGAT KRITIS dan tidak mudah terkesan oleh ide tanpa data.
     
-    [ATURAN WAJIB: STRICT JSON FORMAT]
-    Kamu HANYA BOLEH mengeluarkan output dalam format JSON di bawah ini. Jangan tambahkan teks apa pun di luar blok JSON ini:
+    [RUMUS SKORING MUTLAK - WAJIB DIIKUTI]: 
+    1. Nilai awal bisnis adalah 10.0.
+    2. Kurangi 1.0 poin untuk SETIAP tanda peringatan (⚠️) yang ditemukan oleh Auditor dalam evaluasi.
+    3. Kurangi 2.0 poin ekstra JIKA user secara eksplisit menolak riset data, hanya mengandalkan 'feeling', atau tidak memiliki bukti konkret.
+    4. Jika total peringatan ⚠️ berjumlah 3 atau lebih, skor MAKSIMAL yang boleh diberikan adalah 5.0.
+    5. Jangan pernah memberikan skor di atas 8.0 kecuali semua asumsi didukung data valid.
+    
+    [FORMAT LAPORAN JSON - WAJIB DIIKUTI]:
+    Output HANYA blok JSON yang valid dengan struktur persis seperti ini (gunakan bahasa Indonesia):
     {
-      "skor_final": 8.5,
-      "ringkasan_eksekutif": "Analisis mendalam...",
-      "evaluasi_progress_lapangan": "Bedah kemajuan user. Masukkan peringatan risiko dari Auditor di sini (Beri tanda ⚠️ jika ada klaim tanpa bukti).",
-      "potensi_risiko": ["Risiko 1", "Risiko 2"],
+      "skor_final": (angka float, hasil dari rumus skoring),
+      "ringkasan_eksekutif": "Ringkasan tajam 2-3 kalimat mengenai status proyek dan tingkat risikonya.",
+      "evaluasi_progress_lapangan": "Rangkuman evaluasi yang WAJIB menyertakan tanda ⚠️ untuk setiap klaim/asumsi yang tidak ada buktinya.",
+      "potensi_risiko": [
+        "Risiko fatal 1",
+        "Risiko fatal 2"
+      ],
       "action_items": [
-        {"judul": "Nama Tugas", "deskripsi": "Deskripsi tugas strategis"}
+        {
+          "judul": "Nama Tugas|Deskripsi singkat untuk Sidebar",
+          "deskripsi": "Penjelasan mendetail mengenai langkah yang harus dilakukan"
+        }
       ]
-    }""",
+    }
+    
+    JANGAN ADA teks apa pun sebelum karakter '{' atau sesudah karakter '}'.
+    """,
     llm=llm_gemini
 )
+
 # AGEN BARU: The Knowledge Archivist (Pengarsip Memori Jangka Panjang)
 archivist = Agent(
     role='Chief Knowledge Officer',
