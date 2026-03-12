@@ -441,17 +441,21 @@ with page[0]:
                     md_report += "**POTENSI_RISIKO:**\n" + "\n".join([f"- {r}" for r in data.get('potensi_risiko', [])]) + "\n\n"
                     md_report += "**ACTION_ITEMS:**\n"
                     
-                    for task in data.get("action_items", []):
-                        t_title = task.get("judul", "Tugas")
-                        t_desc = task.get("deskripsi", "")
-                        md_report += f"- **{t_title}**: {t_desc}\n"
-                        
-                        supabase.table("pending_tasks").insert({
-                            "user_id": user_nickname, 
-                            "category": selected_ws, 
-                            "task_name": f"[{datetime.now().strftime('%d %b')}] {t_title} | {t_desc}", 
-                            "status": "Pending"
-                        }).execute()
+                    # --- SIMPAN TUGAS KE SIDEBAR (PENDING TASKS) ---
+            for task in data.get("action_items", []):
+                t_title = task.get("judul", "Tugas Baru")
+                t_desc = task.get("deskripsi", "Segera lakukan tindakan ini.")
+                
+                # Kita gabungkan judul dan deskripsi agar muncul rapi di Sidebar
+                full_task_text = f"{t_title} | {t_desc}"
+                
+                supabase.table("pending_tasks").insert({
+                    "user_id": user_nickname, 
+                    "category": selected_ws, # Ini harus sama dengan nama workspace di sidebar
+                    "task_name": full_task_text,
+                    "status": "Pending",
+                    "created_at": datetime.now().isoformat()
+                }).execute()
                     
                     # --- ROLLING MASTER SUMMARY ---
                     old_mem_res = supabase.table("user_workspaces").select("master_summary").eq("user_id", user_nickname).eq("workspace_name", selected_ws).execute()
