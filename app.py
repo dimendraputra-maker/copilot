@@ -142,6 +142,34 @@ user_nickname = st.session_state.current_user
 available_ws = get_user_workspaces(user_nickname)
 selected_ws = st.sidebar.selectbox("Pilih Ruang Kerja Aktif:", available_ws, index=available_ws.index(st.session_state.active_workspace) if st.session_state.active_workspace in available_ws else 0)
 
+# FITUR TAMBAH WORKSPACE BARU
+with st.sidebar.expander("➕ Buat Workspace Baru"):
+    new_ws_name = st.text_input("Nama Proyek/Bisnis Baru:")
+    if st.button("Buat Ruang Kerja", use_container_width=True):
+        if new_ws_name:
+            if new_ws_name not in available_ws:
+                try:
+                    # Menyimpan workspace baru ke database
+                    supabase.table("user_workspaces").insert({
+                        "user_id": user_nickname,
+                        "workspace_name": new_ws_name,
+                        "master_summary": "" # Memori awal dikosongkan
+                    }).execute()
+                    st.success(f"Berhasil dibuat!")
+                    
+                    # Pindah otomatis ke workspace baru & refresh layar
+                    st.session_state.active_workspace = new_ws_name
+                    st.session_state.audit_stage = 'input'
+                    st.session_state.ui_chat = []
+                    st.session_state.chat_history = []
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Gagal: {e}")
+            else:
+                st.warning("Nama workspace sudah ada!")
+        else:
+            st.warning("Nama tidak boleh kosong.")
+
 # 2. HANDLE PERUBAHAN WORKSPACE
 if selected_ws != st.session_state.active_workspace:
     st.session_state.active_workspace = selected_ws
