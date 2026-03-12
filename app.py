@@ -468,8 +468,18 @@ with page[0]:
                 except Exception as e:
                     f_score = 5.0
                     md_report = f"**Sistem Peringatan: Format JSON Gagal. Error: {str(e)}**\n\n{res}"
+                    data = {} # Mencegah aplikasi crash jika AI gagal membuat JSON
                 
-                supabase.table("audit_log").insert({"user_id": user_nickname, "category": selected_ws, "score": f_score, "audit_report": md_report}).execute()
+                # --- KODE BARU: MENYIMPAN KE KOLOM TERPISAH UNTUK DASHBOARD CARD VIEW ---
+                supabase.table("audit_log").insert({
+                    "user_id": user_nickname, 
+                    "category": selected_ws, 
+                    "score": f_score, 
+                    "audit_report": md_report,
+                    "ringkasan_eksekutif": data.get('ringkasan_eksekutif', 'Tidak ada ringkasan.'),
+                    "evaluasi_progress_lapangan": data.get('evaluasi_progress_lapangan', 'Tidak ada evaluasi.'),
+                    "potensi_risiko": json.dumps(data.get('potensi_risiko', []))
+                }).execute()
                 
                 st.session_state.report_cache, st.session_state.score_cache, st.session_state.data_saved = md_report, f_score, True
                 st.rerun()
