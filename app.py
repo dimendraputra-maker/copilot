@@ -442,20 +442,20 @@ with page[0]:
                     md_report += "**ACTION_ITEMS:**\n"
                     
                     # --- SIMPAN TUGAS KE SIDEBAR (PENDING TASKS) ---
-            for task in data.get("action_items", []):
-                t_title = task.get("judul", "Tugas Baru")
-                t_desc = task.get("deskripsi", "Segera lakukan tindakan ini.")
-                
-                # Kita gabungkan judul dan deskripsi agar muncul rapi di Sidebar
-                full_task_text = f"{t_title} | {t_desc}"
-                
-                supabase.table("pending_tasks").insert({
-                    "user_id": user_nickname, 
-                    "category": selected_ws, # Ini harus sama dengan nama workspace di sidebar
-                    "task_name": full_task_text,
-                    "status": "Pending",
-                    "created_at": datetime.now().isoformat()
-                }).execute()
+                    for task in data.get("action_items", []):
+                        t_title = task.get("judul", "Tugas Baru")
+                        t_desc = task.get("deskripsi", "Segera lakukan tindakan ini.")
+                        
+                        # Kita gabungkan judul dan deskripsi agar muncul rapi di Sidebar
+                        full_task_text = f"{t_title} | {t_desc}"
+                        
+                        supabase.table("pending_tasks").insert({
+                            "user_id": user_nickname, 
+                            "category": selected_ws, # Ini harus sama dengan nama workspace di sidebar
+                            "task_name": full_task_text,
+                            "status": "Pending",
+                            "created_at": datetime.now().isoformat()
+                        }).execute()
                     
                     # --- ROLLING MASTER SUMMARY ---
                     old_mem_res = supabase.table("user_workspaces").select("master_summary").eq("user_id", user_nickname).eq("workspace_name", selected_ws).execute()
@@ -488,7 +488,6 @@ with page[0]:
                 st.session_state.report_cache, st.session_state.score_cache, st.session_state.data_saved = md_report, f_score, True
                 st.rerun()
 
-        st.markdown(st.session_state.report_cache)
         st.markdown(st.session_state.report_cache)
         st.download_button("📥 Download PDF", data=generate_pdf(user_nickname, st.session_state.report_cache, st.session_state.score_cache), file_name=f"Audit_{selected_ws}.pdf", use_container_width=True)
         
