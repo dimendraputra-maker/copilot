@@ -290,7 +290,7 @@ architect = Agent(
       "action_items": [
         {
           "judul": "Nama Tugas|Deskripsi singkat untuk Sidebar",
-          "deskripsi": "Penjelasan mendetail mengenai langkah yang harus dilakukan"
+          "deskripsi": "Penjelasan mendetail mengenai langkah yang harus dilakukan (Minimal 3-4 kalimat instruksi langkah demi langkah)"
         }
       ]
     }
