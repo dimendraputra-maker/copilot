@@ -551,14 +551,15 @@ with page[0]:
             
             if submit_feedback:
                 try:
-                    supabase.table("user_feedback").insert({
-                        "user_id": user_nickname,
-                        "workspace": selected_ws,
-                        "rating": rating,
-                        "comment": komentar,
+                    # Sudah diarahkan ke tabel audit_analytics dengan nama kolom yang benar!
+                    supabase.table("audit_analytics").insert({
+                        "user_nickname": user_nickname, 
+                        "category": selected_ws,
+                        "clarity_score": rating,
+                        "critique": komentar,
                         "created_at": datetime.now().isoformat()
                     }).execute()
-                    st.success("Terima kasih atas penilaianmu! 🙏 Feedback ini membantu AI menjadi lebih pintar.")
+                    st.success("Terima kasih atas penilaianmu! 🙏 Feedback ini terekam di sistem Analytics kami.")
                 except Exception as e:
                     st.error(f"Gagal menyimpan feedback: {e}")
         
