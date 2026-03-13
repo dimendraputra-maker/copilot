@@ -132,7 +132,54 @@ if st.session_state.current_user is None:
             else: st.error("Salah password.")
     st.stop()
 
+# Jika user berhasil lewat dari st.stop() di atas, namanya disimpan:
 user_nickname = st.session_state.current_user
+
+# ==========================================
+# 2.5 FITUR TRIAL 7 HARI & ADMIN BYPASS
+# ==========================================
+from datetime import datetime, timedelta, timezone
+
+# 👑 1. TENTUKAN SIAPA BOSNYA (Ganti dengan Username yang kamu pakai buat login!)
+ADMIN_USERNAME = "NamaKamuDisini" 
+
+if user_nickname == ADMIN_USERNAME:
+    # --- JALUR KHUSUS ADMIN (VIP) ---
+    st.sidebar.success(f"👑 VIP Access: Welcome back, {user_nickname}!")
+    
+else:
+    # --- JALUR TESTER BIASA (DENGAN BATAS WAKTU 7 HARI) ---
+    user_check = supabase.table("beta_users").select("*").eq("user_nickname", user_nickname).execute()
+    
+    if not user_check.data:
+        # JIKA TESTER BARU: Catat waktu kedatangannya hari ini
+        supabase.table("beta_users").insert({"user_nickname": user_nickname}).execute()
+        st.sidebar.success("🎉 Selamat datang! Masa Trial 7 Hari Anda dimulai hari ini.")
+        
+    else:
+        # JIKA TESTER LAMA: Cek apakah argonya sudah habis?
+        first_login_str = user_check.data[0]['first_login']
+        first_login_date = datetime.fromisoformat(first_login_str.replace('Z', '+00:00'))
+        waktu_sekarang = datetime.now(timezone.utc)
+        
+        batas_trial = first_login_date + timedelta(days=7) 
+
+        if waktu_sekarang > batas_trial:
+            # 🛑 GEMBOK APLIKASI JIKA WAKTU HABIS
+            st.error("⏳ Masa Trial Beta Anda sudah habis!")
+            st.warning("Terima kasih telah berpartisipasi! Silakan hubungi Admin untuk mendapatkan akses penuh.")
+            
+            # Berikan tombol untuk keluar/logout agar mereka tidak stuck
+            if st.button("Keluar (Logout)"):
+                st.session_state.current_user = None
+                st.rerun()
+                
+            st.stop() # <--- Ini yang memblokir mereka masuk ke menu Workspace
+            
+        else:
+            # Jika waktu masih ada, tampilkan sisa hari di sidebar
+            sisa_hari = (batas_trial - waktu_sekarang).days
+            st.sidebar.info(f"⏱️ Versi Beta. Sisa masa trial: {sisa_hari} hari.")
 
 # ==========================================
 # SIDEBAR: WORKSPACE & ACTION ITEMS
