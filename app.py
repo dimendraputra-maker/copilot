@@ -141,7 +141,7 @@ user_nickname = st.session_state.current_user
 from datetime import datetime, timedelta, timezone
 
 # 👑 1. TENTUKAN SIAPA BOSNYA (Ganti dengan Username yang kamu pakai buat login!)
-ADMIN_USERNAME = "NamaKamuDisini" 
+ADMIN_USERNAME = "Anabionn" 
 
 if user_nickname == ADMIN_USERNAME:
     # --- JALUR KHUSUS ADMIN (VIP) ---
