@@ -481,22 +481,43 @@ with page[0]:
                     
                     f_score = float(data.get("skor_final", 5.0))
                     
-                    md_report = f"### SKOR_FINAL: {f_score}\n\n"
-                    md_report += f"**RINGKASAN_EKSEKUTIF:**\n{data.get('ringkasan_eksekutif', '')}\n\n"
-                    md_report += f"**EVALUASI_PROGRESS_LAPANGAN:**\n{data.get('evaluasi_progress_lapangan', '')}\n\n"
-                    md_report += "**POTENSI_RISIKO:**\n" + "\n".join([f"- {r}" for r in data.get('potensi_risiko', [])]) + "\n\n"
-                    md_report += "**ACTION ITEMS (TUGAS & SOLUSI):**\n"
+                    # ==========================================
+                    # MERAKIT UI LAPORAN YANG ESTETIK & RAPI
+                    # ==========================================
+                    md_report = f"# 📊 Blueprint Audit Strategis\n"
+                    md_report += f"### 🎯 Skor Final: **{f_score} / 10.0**\n"
+                    md_report += "---\n\n"
+                    
+                    # 1. Ringkasan Eksekutif (Format Quote)
+                    md_report += f"### 📑 Ringkasan Eksekutif\n"
+                    md_report += f"> {data.get('ringkasan_eksekutif', '')}\n\n"
+                    
+                    # 2. Evaluasi Lapangan (Pecah paragraf setiap ada bendera merah)
+                    eval_text = data.get('evaluasi_progress_lapangan', '')
+                    eval_text_rapi = eval_text.replace("⚠️", "⚠️\n\n") 
+                    md_report += f"### 🔍 Evaluasi Progress Lapangan\n"
+                    md_report += f"{eval_text_rapi}\n\n"
+                    
+                    # 3. Potensi Risiko (Format Bullet List)
+                    md_report += "### 🚨 Potensi Risiko Fatal\n"
+                    for r in data.get('potensi_risiko', []):
+                        md_report += f"- {r}\n"
+                    md_report += "\n"
+                    
+                    # 4. Action Items (Penomoran & Indentasi Rapi)
+                    md_report += "### 🛠️ Action Items (Tugas & Solusi)\n"
                     
                     # --- SIMPAN TUGAS KE SIDEBAR SEKALIGUS TAMPILKAN DI LAPORAN UTAMA ---
                     for i, task in enumerate(data.get("action_items", []), 1):
                         t_title = task.get("judul", "Tugas Baru")
                         t_desc = task.get("deskripsi", "Segera lakukan tindakan ini.")
                         
-                        # 1. Tambahkan ke Laporan Utama (md_report) agar bisa dibaca dan masuk PDF
+                        # Format UI di Laporan Utama
                         judul_bersih = t_title.split('|')[0] if '|' in t_title else t_title
-                        md_report += f"{i}. **{judul_bersih.strip()}**\n   *Detail:* {t_desc}\n\n"
+                        md_report += f"**{i}. {judul_bersih.strip()}**\n"
+                        md_report += f"* {t_desc}\n\n"
                         
-                        # 2. Format untuk disimpan ke database (agar rapi di Sidebar)
+                        # Format untuk disimpan ke database (Sidebar)
                         full_task_text = f"{t_title} | {t_desc}"
                         
                         supabase.table("pending_tasks").insert({
