@@ -314,8 +314,8 @@ auditor = Agent(
 
 architect = Agent(
     role='Lead Solutions Architect & Strict Scorer',
-    goal='Menyusun Blueprint Strategis dalam format JSON yang valid berdasarkan temuan Auditor.',
-    backstory="""Kamu adalah arsitek bisnis senior yang merangkum temuan Auditor menjadi laporan final. Kamu SANGAT KRITIS dan tidak mudah terkesan oleh ide tanpa data.
+    goal='Menyusun Blueprint Strategis dalam format JSON yang mendalam dan komprehensif berdasarkan temuan Auditor.',
+    backstory="""Kamu adalah arsitek bisnis senior yang merangkum temuan Auditor menjadi laporan final. Kamu SANGAT KRITIS dan dituntut memberikan analisis yang mendalam, bukan sekadar basa-basi.
     
     [RUMUS SKORING MUTLAK - WAJIB DIIKUTI]: 
     1. Nilai awal bisnis adalah 10.0.
@@ -328,16 +328,16 @@ architect = Agent(
     Output HANYA blok JSON yang valid dengan struktur persis seperti ini (gunakan bahasa Indonesia):
     {
       "skor_final": (angka float, hasil dari rumus skoring),
-      "ringkasan_eksekutif": "Ringkasan tajam 2-3 kalimat mengenai status proyek dan tingkat risikonya.",
-      "evaluasi_progress_lapangan": "Rangkuman evaluasi yang WAJIB menyertakan tanda ⚠️ untuk setiap klaim/asumsi yang tidak ada buktinya.",
+      "ringkasan_eksekutif": "Analisis yang sangat mendalam dan komprehensif (minimal 2 paragraf panjang) mengenai akar masalah, jebakan psikologis user, dan status strategi saat ini.",
+      "evaluasi_progress_lapangan": "Evaluasi brutal dan detail yang membedah setiap asumsi user. WAJIB menyertakan tanda ⚠️ untuk SETIAP klaim/asumsi yang tidak ada buktinya. Jelaskan kenapa asumsi itu berbahaya (minimal 2 paragraf).",
       "potensi_risiko": [
-        "Risiko fatal 1",
-        "Risiko fatal 2"
+        "Penjelasan detail risiko 1 beserta dampak finansial/operasionalnya",
+        "Penjelasan detail risiko 2 beserta dampak finansial/operasionalnya"
       ],
       "action_items": [
         {
           "judul": "Nama Tugas|Deskripsi singkat untuk Sidebar",
-          "deskripsi": "Penjelasan mendetail mengenai langkah yang harus dilakukan (Minimal 3-4 kalimat instruksi langkah demi langkah)"
+          "deskripsi": "Penjelasan mendetail mengenai langkah taktis yang harus dilakukan (Minimal 4-5 kalimat instruksi langkah demi langkah)"
         }
       ]
     }
@@ -346,7 +346,6 @@ architect = Agent(
     """,
     llm=llm_gemini
 )
-
 # AGEN BARU: The Knowledge Archivist (Pengarsip Memori Jangka Panjang)
 archivist = Agent(
     role='Chief Knowledge Officer',
@@ -486,19 +485,23 @@ with page[0]:
                     md_report += f"**RINGKASAN_EKSEKUTIF:**\n{data.get('ringkasan_eksekutif', '')}\n\n"
                     md_report += f"**EVALUASI_PROGRESS_LAPANGAN:**\n{data.get('evaluasi_progress_lapangan', '')}\n\n"
                     md_report += "**POTENSI_RISIKO:**\n" + "\n".join([f"- {r}" for r in data.get('potensi_risiko', [])]) + "\n\n"
-                    md_report += "**ACTION_ITEMS:**\n"
+                    md_report += "**ACTION ITEMS (TUGAS & SOLUSI):**\n"
                     
-                    # --- SIMPAN TUGAS KE SIDEBAR (PENDING TASKS) ---
-                    for task in data.get("action_items", []):
+                    # --- SIMPAN TUGAS KE SIDEBAR SEKALIGUS TAMPILKAN DI LAPORAN UTAMA ---
+                    for i, task in enumerate(data.get("action_items", []), 1):
                         t_title = task.get("judul", "Tugas Baru")
                         t_desc = task.get("deskripsi", "Segera lakukan tindakan ini.")
                         
-                        # Kita gabungkan judul dan deskripsi agar muncul rapi di Sidebar
+                        # 1. Tambahkan ke Laporan Utama (md_report) agar bisa dibaca dan masuk PDF
+                        judul_bersih = t_title.split('|')[0] if '|' in t_title else t_title
+                        md_report += f"{i}. **{judul_bersih.strip()}**\n   *Detail:* {t_desc}\n\n"
+                        
+                        # 2. Format untuk disimpan ke database (agar rapi di Sidebar)
                         full_task_text = f"{t_title} | {t_desc}"
                         
                         supabase.table("pending_tasks").insert({
                             "user_id": user_nickname, 
-                            "category": selected_ws, # Ini harus sama dengan nama workspace di sidebar
+                            "category": selected_ws,
                             "task_name": full_task_text,
                             "status": "Pending",
                             "created_at": datetime.now().isoformat()
