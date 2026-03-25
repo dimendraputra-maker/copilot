@@ -29,12 +29,7 @@ SB_URL = st.secrets["SUPABASE_URL"]
 SB_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SB_URL, SB_KEY)
 
-# Perbaikan Pydantic ValidationError: Menyuntikkan API_KEY secara eksplisit
-llm_gemini = ChatGoogleGenerativeAI(
-    model="gemini-2.0-flash", 
-    temperature=0.3,
-    google_api_key=API_KEY.strip()
-)
+# llm_gemini dihapus karena memicu ValidationError pada CrewAI versi baru
 vision_model = genai.GenerativeModel('gemini-2.0-flash')
 # ==========================================
 # 1. CORE FUNCTIONS & SELECTIVE MEMORY
@@ -303,7 +298,7 @@ consultant = Agent(
     7. Jika 'memory_context' menunjukkan adanya histori tugas sebelumnya, kamu harus menanyakan progres nyata dan bukti (foto/angka). 
        Jangan lanjut ke topik baru sebelum mengevaluasi apakah tugas lama sudah berdampak di dunia nyata.
     8. PENANGANAN TANPA BUKTI: Jika user mengklaim tugas selesai tapi TIDAK ADA BUKTI, jangan hukum/marahi, tapi berikan PERINGATAN RISIKO secara natural bahwa asumsi tanpa data bisa membahayakan strategi berikutnya.""",
-    llm=llm_gemini
+    llm='gemini/gemini-2.0-flash'
 )
 
 # AGEN BARU: The Devil's Advocate (Skeptical Auditor)
@@ -313,7 +308,7 @@ auditor = Agent(
     backstory="""Kamu adalah 'Devil's Advocate'. Tugasmu bukan memberi solusi, melainkan mencari celah.
     Baca riwayat diskusi dan temukan klaim user yang TIDAK didukung oleh bukti nyata atau angka.
     Buat 'Nota Peringatan Risiko' yang objektif mengenai bahaya dari asumsi tersebut. Tandai tugas yang tak berbukti dengan label [Unverified].""",
-    llm=llm_gemini
+    llm='gemini/gemini-2.0-flash'
 )
 
 architect = Agent(
@@ -348,8 +343,9 @@ architect = Agent(
     
     JANGAN ADA teks apa pun sebelum karakter '{' atau sesudah karakter '}'.
     """,
-    llm=llm_gemini
+    llm='gemini/gemini-2.0-flash'
 )
+
 # AGEN BARU: The Knowledge Archivist (Pengarsip Memori Jangka Panjang)
 archivist = Agent(
     role='Chief Knowledge Officer',
@@ -358,7 +354,7 @@ archivist = Agent(
     Buatlah ringkasan baru yang padat (maksimal 300 kata). 
     Pertahankan keputusan strategis masa lalu, tambahkan perkembangan terbaru, dan buang obrolan basi yang sudah selesai.
     Fokus pada: 1. Core Problem bisnis ini, 2. Strategi jangka panjang yang sudah disepakati, 3. Progres terbaru.""",
-    llm=llm_gemini
+    llm='gemini/gemini-2.0-flash'
 )
 
 # ==========================================
