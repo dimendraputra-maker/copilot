@@ -29,9 +29,13 @@ SB_URL = st.secrets["SUPABASE_URL"]
 SB_KEY = st.secrets["SUPABASE_KEY"]
 supabase: Client = create_client(SB_URL, SB_KEY)
 
-llm_gemini = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.3)
+# Perbaikan Pydantic ValidationError: Menyuntikkan API_KEY secara eksplisit
+llm_gemini = ChatGoogleGenerativeAI(
+    model="gemini-2.0-flash", 
+    temperature=0.3,
+    google_api_key=API_KEY.strip()
+)
 vision_model = genai.GenerativeModel('gemini-2.0-flash')
-
 # ==========================================
 # 1. CORE FUNCTIONS & SELECTIVE MEMORY
 # ==========================================
