@@ -21,13 +21,20 @@ os.environ["OTEL_SDK_DISABLED"] = "true"
 os.environ["CREWAI_TELEMETRY_OUT_OUT"] = "true"
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-API_KEY = st.secrets["GOOGLE_API_KEY"]
-os.environ["GOOGLE_API_KEY"] = API_KEY.strip()
-genai.configure(api_key=os.environ["GOOGLE_API_KEY"])
+# Mengambil kunci langsung dari Environment Variables (GitHub Secrets)
+API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+if API_KEY:
+    genai.configure(api_key=API_KEY.strip())
+else:
+    st.error("Gagal: GOOGLE_API_KEY tidak terdeteksi di memori sistem GitHub.")
 
-SB_URL = st.secrets["SUPABASE_URL"]
-SB_KEY = st.secrets["SUPABASE_KEY"]
-supabase: Client = create_client(SB_URL, SB_KEY)
+SB_URL = os.environ.get("SUPABASE_URL", "")
+SB_KEY = os.environ.get("SUPABASE_KEY", "")
+
+if SB_URL and SB_KEY:
+    supabase: Client = create_client(SB_URL, SB_KEY)
+else:
+    st.error("Gagal: Kredensial Supabase tidak terdeteksi di memori sistem GitHub.")
 
 # llm_gemini dihapus karena memicu ValidationError pada CrewAI versi baru
 vision_model = genai.GenerativeModel('gemini-2.0-flash')
@@ -109,6 +116,68 @@ def generate_pdf(nickname, report_text, score):
     pdf.set_font("Arial", size=10); pdf.cell(0, 10, txt=f"Score: {score}/10", ln=True, align='C'); pdf.ln(10)
     pdf.multi_cell(0, 5, txt=clean_txt(report_text))
     return pdf.output(dest='S').encode('latin-1')
+
+def generate_pdf(nickname, report_text, score):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16); pdf.cell(0, 10, txt=f"STRATEGIC AUDIT: {clean_txt(nickname)}", ln=True, align='C')
+    pdf.set_font("Arial", size=10); pdf.cell(0, 10, txt=f"Score: {score}/10", ln=True, align='C'); pdf.ln(10)
+    pdf.multi_cell(0, 5, txt=clean_txt(report_text))
+    return pdf.output(dest='S').encode('latin-1')
+
+# --- TAMBAHAN BARU: FUNGSI AI MAPPER (THE OBSERVER) ---
+def ai_data_mapper(raw_payload_str, uid, workspace):
+    try:
+        prompt = f"""
+        Kamu adalah Data Architect & Observer System. Tugasmu memetakan data laporan kotor ke dalam struktur JSON baku.
+        
+        Data Kotor dari User:
+        {raw_payload_str}
+        
+        Aturan Pemetaan Mutlak:
+        1. Keluarkan HANYA format JSON murni tanpa markdown, tanpa teks pengantar.
+        2. Bersihkan semua simbol mata uang (Rp, $, dll), koma, dan titik. Konversi menjadi angka murni (integer/float).
+        3. Jika sebuah metrik tidak ditemukan di data kotor, isi dengan null.
+        4. Kamu harus memetakan data kotor ke kunci (keys) berikut secara logis:
+           - cash_on_hand (Sisa uang di bank)
+           - monthly_burn (Pengeluaran operasional bulanan)
+           - revenue_mrr (Total pendapatan bulanan)
+           - new_mrr (Pendapatan baru bulan ini)
+           - cac_cost (Total pengeluaran marketing)
+           - ltv_value (Nilai profit per pelanggan)
+           - active_users (Jumlah total pengguna aktif)
+           - lost_users (Jumlah pengguna yang berhenti/churn)
+           - pending_deadline (Tugas yang terlambat/stuck)
+           - completed_tasks_weekly (Tugas yang berhasil selesai)
+           - total_active_tasks (Total rencana tugas)
+           - mapping_confidence (Angka float 0.0 - 1.0 seberapa yakin kamu dengan pemetaan ini)
+           - mapping_notes (Catatan singkat 1 kalimat kolom mana saja yang ambigu jika ada)
+           
+        Format Output JSON:
+        {{
+            "cash_on_hand": 500000000,
+            "monthly_burn": 85000000,
+            "...": ...
+        }}
+        """
+        
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        res = model.generate_content(prompt)
+        
+        # Ekstraksi JSON untuk menghindari markdown backticks
+        json_match = re.search(r'\{.*\}', res.text, re.DOTALL)
+        json_str = json_match.group() if json_match else res.text
+        mapped_data = json.loads(json_str)
+        
+        # Menambahkan data relasional
+        mapped_data["user_id"] = uid
+        mapped_data["workspace_name"] = workspace
+        
+        # Memasukkan ke database Supabase
+        supabase.table("startup_metrics").insert(mapped_data).execute()
+        return True, mapped_data
+    except Exception as e:
+        return False, str(e)
 
 # ==========================================
 # 2. LOGIN & AUTHENTICATION
